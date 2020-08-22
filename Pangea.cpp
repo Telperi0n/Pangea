@@ -28,7 +28,7 @@ enum class Panel
     TOOLS
 };
 
-enum class InputFocus // markers for which input box is currently in focus
+enum class InputFocus // markers for which the input box is currently in focus
 {
     NONE,
     X_MESH,
@@ -42,7 +42,8 @@ enum class InputFocus // markers for which input box is currently in focus
     SAVE_MESH,
     LOAD_MESH,
     SAVE_MESH_HEIGHT,
-    LOAD_MESH_HEIGHT
+    LOAD_MESH_HEIGHT,
+    DIRECTORY
 };
 
 // Camera move modes (first person and third person cameras)
@@ -178,6 +179,7 @@ int main()
     bool raiseOnly = true; // if true, brush will check if the vertex is higher than what it's attempting to change it to and if so, not alter it
     bool showSaveWindow = false; // whether or not to display the save window with the export options
     bool showLoadWindow = false; // true if the load window should be shown
+    bool showDirWindow = false; // if directory change window is shown
     
     std::vector<std::vector<VertexState>> history;
     std::vector<VertexState> vertexSelection;
@@ -195,6 +197,7 @@ int main()
     std::string saveHeightString; // the intended max height of the mesh. used to scale the heightmap. defaults to the current highest point
     std::string loadMeshString; // file name of the project to load
     std::string loadHeightString; // the height the value 255 represents in the image being loaded. used to scale the heightmap
+    std::string directoryString; // the desired directory
     
     ModelSelection modelSelection; // the models currently being worked on by their index in models
     modelSelection.height = 0;
@@ -204,10 +207,12 @@ int main()
     
     Ray ray = {0};
     
+    // ANCHORS
     Vector2 meshSelectAnchor = {0, 66}; // location to which all mesh selection elements are relative
     Vector2 toolButtonAnchor = {0, 245}; // location to which all tool elements are relative
     Vector2 saveWindowAnchor = {windowWidth / 2 - 150, windowHeight / 2 - 75};
     Vector2 loadWindowAnchor = {windowWidth / 2 - 150, windowHeight / 2 - 75};
+    Vector2 dirWindowAnchor = {windowWidth / 2 - 250, windowHeight / 2 - 75};
     
     Rectangle UI = {0, 0, 101, 700};
     Rectangle heightmapTab = {0, 0, 101, 20};
@@ -231,13 +236,20 @@ int main()
     Rectangle loadWindowTextBox = {loadWindowAnchor.x + 30, loadWindowAnchor.y + 40, 240, 30};
     Rectangle loadWindowHeightBox = {loadWindowAnchor.x + 30, loadWindowAnchor.y + 115, 240, 30};
     
+    // DIRECTORY WINDOW
+    Rectangle dirWindow = {dirWindowAnchor.x, dirWindowAnchor.y, 500, 120};
+    Rectangle dirWindowOkayButton = {dirWindowAnchor.x + 160, dirWindowAnchor.y + 85, 60, 20};
+    Rectangle dirWindowCancelButton = {dirWindowAnchor.x + 280, dirWindowAnchor.y + 85, 60, 20};
+    Rectangle dirWindowTextBox = {dirWindowAnchor.x + 30, dirWindowAnchor.y + 40, 440, 30};
+    
     // MESH PANEL
-    Rectangle exportButton = {10, 607, 80, 40};
+    Rectangle exportButton = {10, 557, 80, 40};
     Rectangle meshGenButton = {10, 80, 80, 40};
     Rectangle xMeshBox = {35, 30, 55, 20};
     Rectangle zMeshBox = {35, 55, 55, 20};
-    Rectangle updateTextureButton = {10, 507, 80, 40};
-    Rectangle loadButton = {10, 557, 80, 40};
+    Rectangle updateTextureButton = {10, 457, 80, 40};
+    Rectangle loadButton = {10, 507, 80, 40};
+    Rectangle directoryButton = {10, 607, 80, 40};
     
     // CAMERA PANEL
     Rectangle characterButton = {62, 55, 33, 33};
@@ -280,7 +292,7 @@ int main()
   
     SetCameraMode(camera, CAMERA_FREE); // Set a free camera mode
     
-    ChangeDirectory("C:/Users/msgs4/Desktop/Pangea");
+    //ChangeDirectory("C:/Users/msgs4/Desktop/Pangea");
     
     SetTargetFPS(60);
     
@@ -528,6 +540,31 @@ int main()
                 }
                 
             }// check if the mouse is over a 2d element
+            else if (showDirWindow)
+            {
+                if (mousePressed && CheckCollisionPointRec(mousePosition, dirWindowOkayButton))
+                {
+                    char text[directoryString.size() + 1];
+                    strcpy(text, directoryString.c_str());
+                    
+                    if (DirectoryExists(text))
+                    {
+                       ChangeDirectory(text); 
+                       
+                       inputFocus = InputFocus::NONE;
+                       showDirWindow = false;
+                    }
+                }
+                else if (mousePressed && CheckCollisionPointRec(mousePosition, dirWindowCancelButton))
+                {
+                    inputFocus = InputFocus::NONE;
+                    showDirWindow = false;
+                }
+                else if (mousePressed && CheckCollisionPointRec(mousePosition, dirWindowTextBox))
+                {
+                    inputFocus = InputFocus::DIRECTORY;
+                }
+            }
             else if (CheckCollisionPointRec(mousePosition, UI)) // add mouse click check here?
             {
                 switch (panel)
@@ -796,7 +833,14 @@ int main()
                             
                             showLoadWindow = true;
                         }
-                        
+                        else if (mousePressed && CheckCollisionPointRec(mousePosition, directoryButton))
+                        {
+                            brush = BrushTool::NONE;
+                            inputFocus = InputFocus::NONE;
+                            
+                            showDirWindow = true;
+                        }
+                    
                         break;
                     }
                     case Panel::CAMERA:
@@ -2181,6 +2225,23 @@ int main()
                     
                     break;
                 }
+                case InputFocus::DIRECTORY:
+                {
+                    int key = GetKeyPressed();
+                
+                    if ((key >= 32) && (key <= 126))
+                    {
+                        directoryString.push_back((char)key);
+                    }
+
+                    if (IsKeyPressed(KEY_BACKSPACE) && !directoryString.empty())
+                        directoryString.pop_back();
+                    
+                    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))
+                        inputFocus = InputFocus::NONE;
+
+                    break;
+                }
             }
             
     /**********************************************************************************************************************************************************************
@@ -2325,18 +2386,19 @@ int main()
                         DrawRectangleRec(exportButton, GRAY);
                         DrawRectangleRec(meshGenButton, GRAY);
                         DrawRectangleRec(loadButton, GRAY);
+                        DrawRectangleRec(updateTextureButton, GRAY);
+                        DrawRectangleRec(directoryButton, GRAY);
+                        DrawTextRec(GetFontDefault(), "Update Texture", Rectangle {updateTextureButton.x + 5, updateTextureButton.y + 1, updateTextureButton.width - 2, updateTextureButton.height - 2}, 15, 0.5f, true, BLACK);
                         DrawTextRec(GetFontDefault(), "Generate Mesh", Rectangle {meshGenButton.x + 5, meshGenButton.y + 1, meshGenButton.width - 2, meshGenButton.height - 2}, 15, 0.5f, true, BLACK);
                         DrawTextRec(GetFontDefault(), "Export Heightmap", Rectangle {exportButton.x + 5, exportButton.y + 1, exportButton.width - 2, exportButton.height - 2}, 15, 0.5f, true, BLACK);
                         DrawTextRec(GetFontDefault(), "Load Heightmap", Rectangle {loadButton.x + 5, loadButton.y + 1, loadButton.width - 2, loadButton.height - 2}, 15, 0.5f, true, BLACK);
+                        DrawTextRec(GetFontDefault(), "Change Directory", Rectangle {directoryButton.x + 5, directoryButton.y + 1, directoryButton.width - 2, directoryButton.height - 2}, 15, 0.5f, true, BLACK);
                         
                         DrawRectangleRec(xMeshBox, WHITE);
                         DrawRectangleRec(zMeshBox, WHITE);
                         
                         DrawText("X:", 14, 33, 15, BLACK);
                         DrawText("Y:", 14, 58, 15, BLACK);
-                        
-                        DrawRectangleRec(updateTextureButton, GRAY);
-                        DrawTextRec(GetFontDefault(), "Update Texture", Rectangle {updateTextureButton.x + 5, updateTextureButton.y + 1, updateTextureButton.width - 2, updateTextureButton.height - 2}, 15, 0.5f, true, BLACK);
                         
                         if (inputFocus == InputFocus::X_MESH)
                             DrawRectangleLinesEx(xMeshBox, 1, BLACK);
@@ -2712,6 +2774,26 @@ int main()
                     else if (inputFocus == InputFocus::LOAD_MESH_HEIGHT)
                     {
                         DrawRectangleLinesEx(loadWindowHeightBox, 1, BLACK);
+                    }
+                }
+                else if (showDirWindow)
+                {
+                    DrawRectangleRec(dirWindow, LIGHTGRAY);
+                    DrawRectangleRec(dirWindowOkayButton, GRAY);
+                    DrawRectangleRec(dirWindowCancelButton, GRAY);
+                    DrawRectangleRec(dirWindowTextBox, WHITE);
+                    
+                    DrawTextRec(GetFontDefault(), "Okay", Rectangle {dirWindowOkayButton.x + 3, dirWindowOkayButton.y + 3, dirWindowOkayButton.width - 2, dirWindowOkayButton.height - 2}, 15, 0.5f, false, BLACK);
+                    DrawTextRec(GetFontDefault(), "Cancel", Rectangle {dirWindowCancelButton.x + 3, dirWindowCancelButton.y + 3, dirWindowCancelButton.width - 2, dirWindowCancelButton.height - 2}, 15, 0.5f, false, BLACK);
+                    DrawText("Change Directory (full file path):", dirWindowAnchor.x + 6, dirWindowAnchor.y + 12, 17, BLACK);
+                    
+                    char text[directoryString.size() + 1];
+                    strcpy(text, directoryString.c_str());  
+                    DrawTextRec(GetFontDefault(), text, Rectangle {dirWindowTextBox.x + 3, dirWindowTextBox.y + 3, dirWindowTextBox.width - 2, dirWindowTextBox.height - 2}, 15, 0.5f, false, BLACK);
+                    
+                    if (inputFocus == InputFocus::DIRECTORY)
+                    {
+                        DrawRectangleLinesEx(dirWindowTextBox, 1, BLACK);
                     }
                 }
                 
