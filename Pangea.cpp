@@ -44,7 +44,7 @@ enum class InputFocus // markers for which the input box is currently in focus
     SAVE_MESH_HEIGHT, // the height to use as the scale when saving
     LOAD_MESH_HEIGHT, // the height to use as the scale when loading
     DIRECTORY, // file path of the desired directory
-    INNER_RADIUS, // size of the inner radius (optional when stamp tool is flipped)
+    INNER_RADIUS, // size of the inner radius
     STRETCH_LENGTH, // distance between the twin stamps when stamp stretch is on
     STAMP_ROTATION, // rotation of the stamp tool when stretch is on
     STAMP_SLOPE, // the angle the stamp tool will increment on when dragged
@@ -144,7 +144,7 @@ void ProcessInput(int key, std::string& s, float& input, InputFocus& inputFocus,
 
 std::vector<ModelVertex> FindVertexSelection(const std::vector<std::vector<Model>>& models, const ModelSelection& modelSelection, const RayHitInfo hitPosition, float selectRadius); // find the vertices within the selection radius of the ray hit position
 
-void FindStampPoints(float stampRotationAngle, float stampStretchLength, Vector2& outVec1, Vector2& outVec2, RayHitInfo hitPosition); // finds the ends of the stamp tool when stretch is active
+void FindStampPoints(float stampRotationAngle, float stampStretchLength, Vector2& outVec1, Vector2& outVec2, Vector2 stampAnchor); // finds the ends of the stamp tool when stretch is active
 
 float PointSegmentDistance(Vector2 point, Vector2 segmentPoint1, Vector2 segmentPoint2); // shortest distance from a point to a line segment
 
@@ -184,17 +184,17 @@ int main()
     int stepIndex = 0;
     int canvasWidth = 0; // in number of models
     int canvasHeight = 0; // in number of models
-    float timeCounter = 0;
+    float timeCounter = 0; // used to track number of frames passed
     float selectRadius = 1.5f;
     float toolStrength = 0.1f; 
     float highestY = 0.0f; // highest y value on the mesh
     float lowestY = 0.0f; // lowest y value on the mesh
-    float stampAngle = 45.0f;
-    float stampHeight = 0;
+    float stampAngle = 60.0f; // how steep the stamp shape is
+    float stampHeight = 0; // optional height cap of the stamp tool
     float innerRadius = 0;
     float stampStretchLength = 0.5f;
     float stampRotationAngle = 0.0f;
-    float stampSlope = -35.0f;
+    float stampSlope = 0.0f;
     float stampOffset = 0.0f;
     bool updateFlag = false;
     bool selectionMask = false;
@@ -343,7 +343,7 @@ int main()
     SetCameraMode(camera, CAMERA_FREE); // Set a free camera mode
     
     ChangeDirectory("C:/Users/msgs4/Desktop/Pangea");
-    float tolerance;
+    
     SetTargetFPS(60);
     
     while (!WindowShouldClose())
@@ -1370,7 +1370,7 @@ int main()
                             {
                                 stampFlip = !stampFlip;
                             }
-                            else if (CheckCollisionPointRec(mousePosition, innerRadiusBox) && stampFlip)
+                            else if (CheckCollisionPointRec(mousePosition, innerRadiusBox))
                             {
                                 inputFocus = InputFocus::INNER_RADIUS;
                             }
@@ -1467,7 +1467,11 @@ int main()
                     {
                         vertexIndices = FindVertexSelection(models, modelSelection, hitPosition, stampStretchLength); // this info will be used to find the height of the cylinders drawn around hit position
                         
-                        FindStampPoints(stampRotationAngle, stampStretchLength, stamp1, stamp2, hitPosition);
+                        FindStampPoints(stampRotationAngle, stampStretchLength, stamp1, stamp2, Vector2{hitPosition.position.x, hitPosition.position.z});
+                    }
+                    else if (hitPosition.hit && innerRadius > 0 && brush == BrushTool::STAMP)
+                    {
+                        vertexIndices = FindVertexSelection(models, modelSelection, hitPosition, selectRadius+innerRadius);
                     }
                     else if (hitPosition.hit)
                     {
@@ -1888,81 +1892,86 @@ int main()
                     
                     static Vector2 previousLocation; // location of the last hit position
                     
-                    if (stampSlope != 0 && stampDrag)
+                    if (stampSlope != 0 && stampDrag && !stampStretch) // adjust the select radius if there is a slope and the stamp is being dragged. if stamp stretch is true, this is done later
                     {
                         float distance = xzDistance(Vector2{hitPosition.position.x, hitPosition.position.z}, previousLocation); // distance between the current and previous hit position
-                        float angle = 90 - fabs(stampSlope);
+                        float angle = 90 - fabs(stampSlope); // right triangle with 90 degrees and stampSlope on top, angle is on bottom
                         float heightDifference = distance/sinf(angle*DEG2RAD)*sinf(fabs(stampSlope)*DEG2RAD);
                         
-                        float ratio = fabs(stampSlope) / angle;
+                        float ratio = sinf((90 - stampAngle)*DEG2RAD) / sinf(stampAngle*DEG2RAD); // rise to run ratio, used to detemine how much height difference translates into select radius difference
                         
                         if (stampSlope > 0)
-                            selectRadius = selectRadius + ratio * distance;
+                            selectRadius = selectRadius + ratio * heightDifference;
                         else
-                            selectRadius = selectRadius - ratio *distance;
+                        {
+                            selectRadius = selectRadius - ratio * heightDifference;
+                            
+                            if (selectRadius < 0)
+                                selectRadius = 0;
+                        }
                     }
+                    
+                    float influenceRadius = selectRadius + innerRadius; // select radius is expanded by inner radius
+                    float heightCap = selectRadius*sinf(stampAngle*DEG2RAD)/sinf((180 - (90 + stampAngle))*DEG2RAD); // max height that can be produced by this select radius and stamp angle
                     
                     if (stampStretch) // find the vertex selection if stamp stretch is on, which has to be done differently
                     {       
-                        static Vector2 stampAnchor; // compared to hit position to determine new stamp rotation. is moved to current hit position every time the rotation changes
+                        static Vector2 stampAnchor; // compared to hit position to determine new stamp rotation
                         float direction; // angle from the last position to the new one
-                        float distX = fabs(hitPosition.position.x - stampAnchor.x); // x distance from last hit to new hit
-                        float distY = fabs(hitPosition.position.z - stampAnchor.y); // y distance from last hit to new hit
+                        float adjustedDirection; // final angle to use to determine stamp rotation
+                        float distX = fabs(hitPosition.position.x - stampAnchor.x); // stamp anchor to hit position in x
+                        float distY = fabs(hitPosition.position.z - stampAnchor.y); // stamp anchor to hit position in y
+                        float dist = xzDistance(Vector2{hitPosition.position.x, hitPosition.position.z}, stampAnchor); // distance from stamp anchor to hit position
                         
-                        tolerance = 0.1; // distance required between previous and current hit position to update the stamp rotation
+                        float tolerance = stampStretchLength; // distance required between the stamp anchor and hit position to update the stamp rotation
                         
-                        if (stampStretchLength > 0.5) // scale tolerance between .1 and .3 depending on stretch length. < .5 = .1, > 5 = .3
-                        {
-                            if (stampStretchLength >= 5)
-                            {
-                                tolerance = 0.3;
-                            }
-                            else
-                            {
-                                tolerance += (stampStretchLength - 0.5) / 4.5 * 0.2;
-                            }
-                        }
-                        
-                        if (stampDrag && (distX > tolerance || distY > tolerance)) // update the rotation angle based on the new position. wait until distX and Y are past a certain distance from previous location, small numbers will cause the stamp to jitter
+                        if (stampDrag && dist > tolerance) // update the rotation angle based on the new position
                         {
                             if (hitPosition.position.x == stampAnchor.x && hitPosition.position.z > stampAnchor.y)
                             {
                                 direction = 0;
+                                adjustedDirection = 0;
                             }
                             else if (hitPosition.position.x > stampAnchor.x && hitPosition.position.z == stampAnchor.y)
                             {
                                 direction = 90;
+                                adjustedDirection = 90;
                             }
                             else if (hitPosition.position.x == stampAnchor.x && hitPosition.position.z < stampAnchor.y)
                             {
                                 direction = 180;
+                                adjustedDirection = 180;
                             }
                             else if (hitPosition.position.x < stampAnchor.x && hitPosition.position.z == stampAnchor.y)
                             {
                                 direction = 270;
+                                adjustedDirection = 270;
                             }
                             else
                             {
-                                float hyp = distX*distX + distY*distY;
-                                hyp = sqrt(hyp);
-                                
-                                direction = asinf(distX / hyp)*RAD2DEG;
-                                
                                 if (hitPosition.position.x > stampAnchor.x && hitPosition.position.z < stampAnchor.y)
                                 {
-                                    direction = asinf(distY / hyp)*RAD2DEG + 90;
+                                    direction = asinf(distY / dist)*RAD2DEG;
+                                    adjustedDirection = direction + 90;
                                 }
                                 else if (hitPosition.position.x < stampAnchor.x && hitPosition.position.z < stampAnchor.y)
                                 {
-                                    direction = asinf(distX / hyp)*RAD2DEG + 180;
+                                    direction = asinf(distX / dist)*RAD2DEG;
+                                    adjustedDirection = direction + 180;
                                 }
                                 else if (hitPosition.position.x < stampAnchor.x && hitPosition.position.z > stampAnchor.y)
                                 {
-                                    direction = asinf(distY / hyp)*RAD2DEG + 270;
+                                    direction = asinf(distY / dist)*RAD2DEG;
+                                    adjustedDirection = direction + 270;
+                                }
+                                else
+                                {
+                                    direction = asinf(distX / dist)*RAD2DEG;
+                                    adjustedDirection = direction;  
                                 }
                             }
                             
-                            stampRotationAngle = direction + 90.f;
+                            stampRotationAngle = adjustedDirection + 90.f;
                             
                             if (stampRotationAngle >= 360)
                                 stampRotationAngle -= 360;
@@ -1970,13 +1979,34 @@ int main()
                             if (stampRotationAngle < 0)
                                 stampRotationAngle += 360;
                             
-                            stampAnchor = Vector2{hitPosition.position.x, hitPosition.position.z};
+                            float ratio = (dist - tolerance) / dist; // used to multiply to the x and y difference in the anchor and hit position to determine new location of anchor
+                            
+                            stampAnchor = Vector2{(hitPosition.position.x - stampAnchor.x) * ratio + stampAnchor.x, (hitPosition.position.z - stampAnchor.y) * ratio + stampAnchor.y};
+                            
+                            if (stampSlope != 0) // adjust the select radius if there is a slope and the stamp is being dragged
+                            {
+                                float distance = xzDistance(Vector2{hitPosition.position.x, hitPosition.position.z}, previousLocation); // distance between the current and previous hit position
+                                float angle = 90 - fabs(stampSlope); // right triangle with 90 degrees and stampSlope on top, angle is on bottom
+                                float heightDifference = distance/sinf(angle*DEG2RAD)*sinf(fabs(stampSlope)*DEG2RAD);
+                                
+                                float ratio = sinf((90 - stampAngle)*DEG2RAD) / sinf(stampAngle*DEG2RAD); // rise to run ratio, used to detemine how much height difference translates into select radius difference
+                                
+                                if (stampSlope > 0)
+                                    selectRadius = selectRadius + ratio * heightDifference;
+                                else
+                                {
+                                    selectRadius = selectRadius - ratio * heightDifference;
+                                    
+                                    if (selectRadius < 0)
+                                        selectRadius = 0;
+                                }
+                            }
                         }
                         
                         if(!stampDrag) // set stamp anchor if this is the first edit while the mouse has been held down
                             stampAnchor = Vector2{hitPosition.position.x, hitPosition.position.z};
                         
-                        FindStampPoints(stampRotationAngle, stampStretchLength, stamp1, stamp2, hitPosition);
+                        FindStampPoints(stampRotationAngle, stampStretchLength, stamp1, stamp2, stampAnchor);
                         
                         for (int i = 0; i < modelSelection.expandedSelection.size(); i++) // check all models recorded by modelSelection for vertices to be modified
                         {
@@ -1986,9 +2016,12 @@ int main()
                             
                                 float dist = PointSegmentDistance(vertexCoords, stamp1, stamp2);
                                 
-                                if (dist <= selectRadius)
+                                if (dist <= influenceRadius)
                                 {
-                                    float yValue = ((selectRadius - dist)*sinf(stampAngle*DEG2RAD)/sinf((180 - (90 + stampAngle))*DEG2RAD)); // new y value of this vertex
+                                    float yValue = ((influenceRadius - dist)*sinf(stampAngle*DEG2RAD)/sinf((180 - (90 + stampAngle))*DEG2RAD)); // new y value of this vertex
+                                    
+                                    if (yValue > heightCap) // if the vertex is within the inner radius, limit its height extention
+                                        yValue = heightCap;
                                     
                                     if (raiseOnly)
                                     {
@@ -2020,8 +2053,6 @@ int main()
                                 }
                             }
                         }
-                        
-                        stampDrag = true;
                     }
                     else
                     {
@@ -2029,8 +2060,11 @@ int main()
                         {
                             Vector2 vertexPos = {models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index], models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 2]};
                             
-                            float dist = (selectRadius - xzDistance(Vector2{hitPosition.position.x, hitPosition.position.z}, vertexPos)); // distance from the edge of the selection radius
-                            float yValue = (dist*sinf(stampAngle*DEG2RAD)/sinf((180 - (90 + stampAngle))*DEG2RAD)); // new y value of this vertex
+                            float dist = (influenceRadius - xzDistance(Vector2{hitPosition.position.x, hitPosition.position.z}, vertexPos)); // distance from the edge of the selection radius
+                            float yValue = dist*sinf(stampAngle*DEG2RAD)/sinf((180 - (90 + stampAngle))*DEG2RAD); // new y value of this vertex
+                            
+                            if (yValue > heightCap) // if the vertex is within the inner radius, limit its height extention
+                                yValue = heightCap;
                             
                             if (raiseOnly)
                             {
@@ -2062,7 +2096,7 @@ int main()
                         }
                     }
                     
-                    
+                    stampDrag = true; // set to true so subsequent edits will act accordingly. reset to false on mouse click release
                     previousLocation = {hitPosition.position.x, hitPosition.position.z}; // change previous location to current location so it's ready for the next tick
                     
                     for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
@@ -2138,7 +2172,7 @@ int main()
                 {
                     timeCounter = 0;
                     
-                    if (stampStretch && stampDrag)
+                    if (stampDrag)
                     {
                         stampDrag = false;
                     }
@@ -2418,7 +2452,27 @@ int main()
                 }
                 case InputFocus::INNER_RADIUS:
                 {
-                    ProcessInput(GetKeyPressed(), innerRadiusString, innerRadius, inputFocus, 5);
+                    int key = GetKeyPressed();
+                    
+                    if (((key >= 48 && key <= 57) || key == 46) && ((int)innerRadiusString.size() < 5))
+                    {
+                        innerRadiusString.push_back((char)key);
+                    }
+
+                    if (IsKeyPressed(KEY_BACKSPACE) && !innerRadiusString.empty())
+                        innerRadiusString.pop_back();
+                    
+                    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))
+                    {
+                        if (innerRadiusString.empty())
+                            inputFocus = InputFocus::NONE;
+                        else
+                        {
+                            innerRadius = stof(innerRadiusString);
+                            inputFocus = InputFocus::NONE; 
+                        }
+                    }
+                    
                     break;
                 }
                 case InputFocus::STRETCH_LENGTH:
@@ -2433,7 +2487,27 @@ int main()
                 }
                 case InputFocus::STAMP_SLOPE:
                 {
-                    ProcessInput(GetKeyPressed(), stampSlopeString, stampSlope, inputFocus, 5);
+                    int key = GetKeyPressed();
+                    
+                    if (((key >= 48 && key <= 57) || key == 46 || key == 45) && ((int)stampSlopeString.size() < 5))
+                    {
+                        stampSlopeString.push_back((char)key);
+                    }
+
+                    if (IsKeyPressed(KEY_BACKSPACE) && !stampSlopeString.empty())
+                        stampSlopeString.pop_back();
+                    
+                    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))
+                    {
+                        if (stampSlopeString.empty())
+                            inputFocus = InputFocus::NONE;
+                        else
+                        {
+                            stampSlope = stof(stampSlopeString);
+                            inputFocus = InputFocus::NONE; 
+                        }
+                    }
+                    
                     break;
                 }
                 case InputFocus::STAMP_OFFSET:
@@ -2507,6 +2581,9 @@ int main()
                             {
                                 DrawCylinderWires(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, selectRadius + (stampStretchLength/2), selectRadius + (stampStretchLength/2), cylinderHeight + 0.1, 19, Color {255, 255, 255, 65});
                                 
+                                DrawCylinderWires(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, 0.1, 0.1, cylinderHeight + 0.1, 19, Color {255, 0, 0, 20});
+                                DrawCylinder(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, 0.1, 0.1, cylinderHeight + 0.1, 19, Color {255, 0, 0, 40});  
+                                
                                 DrawCylinderWires(Vector3 {stamp1.x, 0, stamp1.y}, 0.1, 0.1, cylinderHeight + 0.1, 19, Color {126, 0, 255, 20});
                                 DrawCylinder(Vector3 {stamp1.x, 0, stamp1.y}, 0.1, 0.1, cylinderHeight + 0.1, 19, Color {126, 0, 255, 40});  
                            
@@ -2556,7 +2633,7 @@ int main()
                 DrawText(FormatText("%i", temp), 200, 10, 15, BLACK);
                 DrawFPS(windowWidth - 30, 8);
                 }
-                */DrawText(FormatText("%f", tolerance), 200, 10, 15, BLACK);
+                */
                 
                 DrawFPS(windowWidth - 30, 8);
                 DrawRectangleRec(UI, Color{200, 200, 200, 50});
@@ -2769,12 +2846,7 @@ int main()
                             DrawText("Angle:", toolButtonAnchor.x + 5, toolButtonAnchor.y + 162, 11, BLACK);
                             DrawText("Cut Off:", toolButtonAnchor.x + 5, toolButtonAnchor.y + 181, 11, BLACK);
                             DrawText("Flip:", toolButtonAnchor.x + 5, toolButtonAnchor.y + 200, 11, BLACK);
-                            
-                            if (stampFlip)
-                                DrawText("Radius:", toolButtonAnchor.x + 5, toolButtonAnchor.y + 219, 11, BLACK);
-                            else
-                                DrawText("Radius:", toolButtonAnchor.x + 5, toolButtonAnchor.y + 219, 11, GRAY);
-                            
+                            DrawText("Radius:", toolButtonAnchor.x + 5, toolButtonAnchor.y + 219, 11, BLACK);
                             DrawText("Invert:", toolButtonAnchor.x + 5, toolButtonAnchor.y + 238, 11, BLACK);
                             DrawText("Stretch:", toolButtonAnchor.x + 5, toolButtonAnchor.y + 257, 11, BLACK);
                             
@@ -2841,7 +2913,7 @@ int main()
                         
                         DrawText("X:", meshSelectAnchor.x + 5, meshSelectAnchor.y + 12, 15, BLACK);
                         DrawText("Y:", meshSelectAnchor.x + 53, meshSelectAnchor.y + 12, 15, BLACK);
-                        DrawTextRec(GetFontDefault(), "Mesh Selection", Rectangle {meshSelectButton.x + 3, meshSelectButton.y + 3, meshSelectButton.width - 2, meshSelectButton.height - 2}, 15, 0.5f, false, BLACK);
+                        DrawTextRec(GetFontDefault(), "Mesh Select", Rectangle {meshSelectButton.x + 3, meshSelectButton.y + 3, meshSelectButton.width - 2, meshSelectButton.height - 2}, 13, 1.0f, false, BLACK);
                         
                         DrawRectangleRec(selectRadiusBox, WHITE);
                         DrawRectangleRec(toolStrengthBox, WHITE);
@@ -3034,12 +3106,12 @@ int main()
 // smooth tool angle clamp
 // slope finder: find the slope between two points
 // adjust stamp max height with movement (for stretch smoothness)
+// camera lock onto hitposition at certain angle and distance
 
 // -crash after ~141 history steps (if 3x3+ mesh?)
-// -4x4 mesh 4x4 selection, ~55 fps with collision detection. expand mesh to 6x6 and selection to 6x6 (or just more selection), then shrink selection back to 4x4, then ~38 fps with collision detection
-// even if mesh shrunk back to 4x4
 // -loading 2x3 image 'test' twice in a row crashes
 // free fly camera moves slowly when strafing looking down
+// hit detection passing through mesh when camera is at certain relative angles / distances
 
 
 
@@ -3955,7 +4027,7 @@ std::vector<ModelVertex> FindVertexSelection(const std::vector<std::vector<Model
 }
 
 
-void FindStampPoints(float stampRotationAngle, float stampStretchLength, Vector2& outVec1, Vector2& outVec2, RayHitInfo hitPosition)
+void FindStampPoints(float stampRotationAngle, float stampStretchLength, Vector2& outVec1, Vector2& outVec2, Vector2 stampAnchor)
 {
     float offsetX;
     float offsetY;
@@ -4012,8 +4084,8 @@ void FindStampPoints(float stampRotationAngle, float stampStretchLength, Vector2
         offsetY = ((stampStretchLength / 2) * sinf(b*DEG2RAD));
     }
     
-    outVec1 = Vector2{hitPosition.position.x + offsetX, hitPosition.position.z + offsetY};
-    outVec2 = Vector2{hitPosition.position.x - offsetX, hitPosition.position.z - offsetY};
+    outVec1 = Vector2{stampAnchor.x + offsetX, stampAnchor.y + offsetY};
+    outVec2 = Vector2{stampAnchor.x - offsetX, stampAnchor.y - offsetY};
     
     return;
 }
