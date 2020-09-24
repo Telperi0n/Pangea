@@ -52,7 +52,8 @@ enum class InputFocus // markers for which the input box is currently in focus
 };
 
 // Camera move modes (first person and third person cameras)
-typedef enum { 
+typedef enum 
+{ 
     MOVE_FRONT = 0, 
     MOVE_BACK, 
     MOVE_RIGHT, 
@@ -104,6 +105,7 @@ struct ModelSelection
     std::vector<Vector2> expandedSelection; // selection plus adjacent models
 };
 
+
 float xzDistance(Vector2 p1, Vector2 p2); // get the distance between two points on the x and z plane
 
 void HistoryUpdate(std::vector<std::vector<VertexState>>& history, const std::vector<std::vector<Model>>& models, const std::vector<Vector2>& modelCoords, int& stepIndex, int maxSteps);
@@ -149,6 +151,8 @@ void FindStampPoints(float stampRotationAngle, float stampStretchLength, Vector2
 float PointSegmentDistance(Vector2 point, Vector2 segmentPoint1, Vector2 segmentPoint2); // shortest distance from a point to a line segment
 
 bool IsEqualF(float a, float b); // compare two floats
+
+Mesh CopyMesh(const Mesh& mesh); // do a deep copy of a mesh
 
 
 
@@ -211,12 +215,14 @@ int main()
     bool stampFlip = false; // whether the stamp is upside down or right side up
     bool stampInvert = false; // whether the stamp is normal or mirrored vertically
     bool stampStretch = false; // if true, the stamp will become two connected copies of itself equally spaced from the middle that rotate depending on mouse drag movement
-    bool ghostMesh = false; // when set to true, a copy of the model selection is made which is then tested against for ray collision rather than the current mesh. setting to false clears the mesh
+    bool useGhostMesh = false; // when set to true, a copy of the model selection is made which is then tested against for ray collision rather than the current mesh. setting to false clears the mesh
     bool stampDrag = false; // set to true after the first stamp edit with stampStretch on, and off when the left mouse is released
     
     std::vector<std::vector<VertexState>> history;
     std::vector<VertexState> vertexSelection;
     std::vector<std::vector<Model>> models;      // 2d vector of all models
+    
+    std::vector<Model> ghostMesh;  // copy of a selection of models used for collision detection
     
     std::string xMeshString; // models on the x axis
     std::string zMeshString; // models on the z axis
@@ -399,6 +405,12 @@ int main()
             
             Vector2 mousePosition = GetMousePosition();
             bool mousePressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+            bool mouseDown = IsMouseButtonDown(MOUSE_LEFT_BUTTON);
+            
+            if (mouseDown && (IsKeyDown(KEY_R) || IsKeyDown(KEY_V))) // check if keys are down that perclude mouse click edits from happening
+            {
+                mouseDown = false;
+            }
             
             if (mousePressed)
             {
@@ -616,7 +628,7 @@ int main()
                     inputFocus = InputFocus::DIRECTORY;
                 }
             }
-            else if (CheckCollisionPointRec(mousePosition, UI)) // add mouse click check here?
+            else if (CheckCollisionPointRec(mousePosition, UI)) 
             {
                 switch (panel)
                 {
@@ -761,7 +773,6 @@ int main()
                                             int j = models[i].size();
                                             
                                             Image tempImage = GenImageColor(modelVertexWidth, modelVertexHeight, BLACK);
-                                            //Mesh mesh = GenMeshHeightmap(tempImage, (Vector3){ modelWidth, 0, modelHeight });    // Generate heightmap mesh (RAM and VRAM)
                                             Model model = LoadModelFromMesh(GenMeshHeightmap(tempImage, (Vector3){ modelWidth, 0, modelHeight }));  
                                             UnloadImage(tempImage);
                                             
@@ -1400,9 +1411,31 @@ int main()
                             }
                             else if (CheckCollisionPointRec(mousePosition, ghostMeshBox))
                             {
-                                ghostMesh = !ghostMesh;
+                                if (useGhostMesh)
+                                {
+                                    for (int i = 0; i < ghostMesh.size(); i++)
+                                    {
+                                        UnloadModel(ghostMesh[i]);
+                                    }
+                                    
+                                    ghostMesh.clear();
+                                    
+                                    useGhostMesh = false;
+                                }
+                                else
+                                {
+                                    for (int i = 0; i < modelSelection.selection.size(); i++)
+                                    {
+                                        Mesh mesh = CopyMesh(models[modelSelection.selection[i].x][modelSelection.selection[i].y].meshes[0]);
+                                        
+                                        ghostMesh.push_back(LoadModelFromMesh(mesh));
+                                    }
+                                    
+                                    useGhostMesh = true;
+                                }
                             }
                         }
+                        
                         break;
                     }
                 }
@@ -1433,6 +1466,52 @@ int main()
                 
                 Ray ray = GetMouseRay(GetMousePosition(), camera);
                 
+                if (IsKeyDown(KEY_R) && mousePressed && !models.empty()) // change selection radius by height eye dropper style
+                {
+                    if (!models.empty())
+                    {
+                        for (int i = 0; i < models.size(); i++) // test ray against all models
+                        {
+                            for (int j = 0; j < models[i].size(); j++)
+                            {
+                                hitPosition = GetCollisionRayModel2(ray, &models[i][j]); 
+                                
+                                if (hitPosition.hit) // if collision is found, record which and break the search
+                                {
+                                    selectRadius = (hitPosition.position.y / sinf(stampAngle*DEG2RAD)) * sinf((90 - stampAngle)*DEG2RAD);
+                                    
+                                    break;
+                                }
+                            }
+                            
+                            if (hitPosition.hit) break;
+                        }
+                    }
+                }
+                
+                if (IsKeyDown(KEY_V) && mousePressed && !models.empty()) // change stamp offset eye dropper style
+                {
+                    if (!models.empty())
+                    {
+                        for (int i = 0; i < models.size(); i++) // test ray against all models
+                        {
+                            for (int j = 0; j < models[i].size(); j++)
+                            {
+                                hitPosition = GetCollisionRayModel2(ray, &models[i][j]); 
+                                
+                                if (hitPosition.hit) // if collision is found, record which and break the search
+                                {
+                                    stampOffset = hitPosition.position.y;
+                                    
+                                    break;
+                                }
+                            }
+                            
+                            if (hitPosition.hit) break;
+                        }
+                    }
+                }
+                
                 if (!models.empty()) // find the ray hit position
                 {
                     if (rayCollision2d)
@@ -1454,12 +1533,25 @@ int main()
                     }
                     else
                     {
-                        for (int i = 0; i < modelSelection.selection.size(); i++) // test ray against selected models
+                        if (useGhostMesh && !ghostMesh.empty()) // if ghost mesh is active, test collision against that rather than models
                         {
-                            hitPosition = GetCollisionRayModel2(ray, &models[modelSelection.selection[i].x][modelSelection.selection[i].y]); 
-                            
-                            if (hitPosition.hit) // if collision is found, break the search
-                                break;
+                            for (int i = 0; i < ghostMesh.size(); i++)
+                            {
+                                hitPosition = GetCollisionRayModel2(ray, &ghostMesh[i]); 
+                                
+                                if (hitPosition.hit) // if collision is found, break the search
+                                    break;    
+                            }
+                        }
+                        else
+                        {
+                            for (int i = 0; i < modelSelection.selection.size(); i++) // test ray against selected models
+                            {
+                                hitPosition = GetCollisionRayModel2(ray, &models[modelSelection.selection[i].x][modelSelection.selection[i].y]); 
+                                
+                                if (hitPosition.hit) // if collision is found, break the search
+                                    break;
+                            }    
                         }
                     }
                     
@@ -1479,7 +1571,7 @@ int main()
                     }
                 }
                 
-                if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && hitPosition.hit && brush == BrushTool::ELEVATION)
+                if (mouseDown && hitPosition.hit && brush == BrushTool::ELEVATION)
                 {
                     if (!updateFlag) // update the history before executing if this is the first tick of the operation
                     {
@@ -1563,7 +1655,7 @@ int main()
                     updateFlag = true;
                 }
                 
-                if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && hitPosition.hit && brush == BrushTool::FLATTEN)
+                if (mouseDown && hitPosition.hit && brush == BrushTool::FLATTEN)
                 {
                     if (!updateFlag) // update the history before executing if this is the first tick of the operation
                     {
@@ -1617,7 +1709,7 @@ int main()
                     updateFlag = true;
                 }
                 
-                if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && hitPosition.hit && brush == BrushTool::SELECT)
+                if (mouseDown && hitPosition.hit && brush == BrushTool::SELECT)
                 {
                     if (IsKeyDown(KEY_LEFT_CONTROL)) // if left ctrl is down, do the deselect
                     {
@@ -1677,7 +1769,7 @@ int main()
                     }
                 }
                 
-                if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && hitPosition.hit && brush == BrushTool::SMOOTH) // smooth by moving each vertex closer to the average y of its neighbors
+                if (mouseDown && hitPosition.hit && brush == BrushTool::SMOOTH) // smooth by moving each vertex closer to the average y of its neighbors
                 {
                     if (!updateFlag) // update the history before executing if this is the first tick of the operation
                     {
@@ -1882,7 +1974,7 @@ int main()
                     updateFlag = true;
                 }
                 
-                if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && hitPosition.hit && brush == BrushTool::STAMP)
+                if (mouseDown && hitPosition.hit && brush == BrushTool::STAMP)
                 {
                     if (!updateFlag) // update the history before executing if this is the first tick of the operation
                     {
@@ -1892,7 +1984,7 @@ int main()
                     
                     static Vector2 previousLocation; // location of the last hit position
                     
-                    if (stampSlope != 0 && stampDrag && !stampStretch) // adjust the select radius if there is a slope and the stamp is being dragged. if stamp stretch is true, this is done later
+                    if (stampSlope != 0 && stampDrag && !stampStretch && !IsKeyDown(KEY_F)) // adjust the select radius if there is a slope and the stamp is being dragged. if stamp stretch is true, this is done later. holding F prevents
                     {
                         float distance = xzDistance(Vector2{hitPosition.position.x, hitPosition.position.z}, previousLocation); // distance between the current and previous hit position
                         float angle = 90 - fabs(stampSlope); // right triangle with 90 degrees and stampSlope on top, angle is on bottom
@@ -1983,7 +2075,7 @@ int main()
                             
                             stampAnchor = Vector2{(hitPosition.position.x - stampAnchor.x) * ratio + stampAnchor.x, (hitPosition.position.z - stampAnchor.y) * ratio + stampAnchor.y};
                             
-                            if (stampSlope != 0) // adjust the select radius if there is a slope and the stamp is being dragged
+                            if (stampSlope != 0 && !IsKeyDown(KEY_F)) // adjust the select radius if there is a slope and the stamp is being dragged
                             {
                                 float distance = xzDistance(Vector2{hitPosition.position.x, hitPosition.position.z}, previousLocation); // distance between the current and previous hit position
                                 float angle = 90 - fabs(stampSlope); // right triangle with 90 degrees and stampSlope on top, angle is on bottom
@@ -2008,48 +2100,84 @@ int main()
                         
                         FindStampPoints(stampRotationAngle, stampStretchLength, stamp1, stamp2, stampAnchor);
                         
+                        RayHitInfo hp; // hit position on the mesh at the stamp anchor
+                        hp.hit = false;
+                        
+                        if (!rayCollision2d)
+                        {
+                            // if stamp stretch is on, the height to add to vertexY has to be found at stamp anchor, not cursor hit position
+                            Ray ray = {Vector3{stampAnchor.x, highestY, stampAnchor.y}, Vector3{0, -1, 0}}; 
+                            
+                            if (useGhostMesh && !ghostMesh.empty())
+                            {
+                                for (int i = 0; i < ghostMesh.size(); i++)
+                                {
+                                    hp = GetCollisionRayModel2(ray, &ghostMesh[i]);
+                                    
+                                    if (hp.hit) 
+                                        break;
+                                } 
+                            }
+                            else
+                            {
+                                for (int i = 0; i < modelSelection.selection.size(); i++)
+                                {
+                                    hp = GetCollisionRayModel2(ray, &models[modelSelection.selection[i].x][modelSelection.selection[i].y]);
+                                    
+                                    if (hp.hit) 
+                                        break;
+                                }
+                            }
+                        }
+                        
                         for (int i = 0; i < modelSelection.expandedSelection.size(); i++) // check all models recorded by modelSelection for vertices to be modified
                         {
                             for (int j = 0; j < (models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount * 3) - 2; j += 3) // check this models vertices
                             {
+                                float& vertexY = models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j + 1]; // make an alias for this montrosity
+                                
                                 Vector2 vertexCoords = {models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j+2]};
                             
                                 float dist = PointSegmentDistance(vertexCoords, stamp1, stamp2);
                                 
                                 if (dist <= influenceRadius)
                                 {
-                                    float yValue = ((influenceRadius - dist)*sinf(stampAngle*DEG2RAD)/sinf((180 - (90 + stampAngle))*DEG2RAD)); // new y value of this vertex
+                                    float yValue = vertexY; // old y value of this vertex
                                     
-                                    if (yValue > heightCap) // if the vertex is within the inner radius, limit its height extention
-                                        yValue = heightCap;
-                                    
-                                    if (raiseOnly)
+                                    if (stampFlip) // if stamp is upside down
                                     {
-                                        if (stampHeight)
-                                        {
-                                            if (yValue >= stampHeight && models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j + 1] < stampHeight)
-                                                models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j + 1] = stampHeight;   
-                                            else if (yValue < stampHeight && models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j + 1] < yValue)
-                                                models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j + 1] = yValue;   
-                                        }
+                                        dist = dist - innerRadius; // distance from the middle of the selection
+                                        
+                                        if (dist < 0) // the vertices inside inner radius will be at y = 0
+                                            vertexY = 0;
                                         else
-                                        {
-                                            if (models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j + 1] < yValue)
-                                                models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j + 1] = yValue;   
-                                        }
+                                            vertexY = dist*sinf(stampAngle*DEG2RAD)/sinf((180 - (90 + stampAngle))*DEG2RAD); 
                                     }
                                     else
+                                        vertexY = (influenceRadius - dist)*sinf(stampAngle*DEG2RAD)/sinf((180 - (90 + stampAngle))*DEG2RAD);
+                                    
+                                    if (vertexY > heightCap) // if the vertex is within the inner radius, limit its height extention
+                                        vertexY = heightCap;
+                                    
+                                    if (stampInvert) // invert vertexY
+                                        vertexY = -vertexY;
+                                    
+                                    if (stampOffset != 0) // add stamp offset
+                                        vertexY += stampOffset;
+                                    
+                                    if (!rayCollision2d) // if the mouse cursor mode is 3d, add the hit position y to vertexY
                                     {
-                                        if (stampHeight)
-                                        {
-                                            if (yValue <= stampHeight)
-                                                models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j + 1] = yValue; 
-                                            else
-                                                models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j + 1] = stampHeight; 
-                                        }
-                                        else
-                                            models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j + 1] = yValue;
+                                        vertexY += hp.position.y;
                                     }
+                                    
+                                    if (stampHeight && vertexY > stampHeight) // dont allow vertexY to go higher than what stampHeight (cut off) is set to
+                                        vertexY = stampHeight;
+                                        
+                                    if (raiseOnly && vertexY < yValue) // if raise only is on and vertex has been lowered, reverse it
+                                        vertexY = yValue;
+                                        
+                                    if (lowerOnly && vertexY > yValue) // if lower only is on and vertex has been raised, reverse it
+                                        vertexY = yValue;
                                 }
                             }
                         }
@@ -2058,41 +2186,45 @@ int main()
                     {
                         for (int i = 0; i < vertexIndices.size(); i++)
                         {
+                            float& vertexY = models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1]; // make an alias for this montrosity
+                            
                             Vector2 vertexPos = {models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index], models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 2]};
                             
-                            float dist = (influenceRadius - xzDistance(Vector2{hitPosition.position.x, hitPosition.position.z}, vertexPos)); // distance from the edge of the selection radius
-                            float yValue = dist*sinf(stampAngle*DEG2RAD)/sinf((180 - (90 + stampAngle))*DEG2RAD); // new y value of this vertex
-                            
-                            if (yValue > heightCap) // if the vertex is within the inner radius, limit its height extention
-                                yValue = heightCap;
-                            
-                            if (raiseOnly)
+                            float dist = influenceRadius - xzDistance(Vector2{hitPosition.position.x, hitPosition.position.z}, vertexPos); // distance from the edge of the selection radius
+                            float yValue = vertexY;// old y value of this vertex
+
+                            if (stampFlip) // if stamp is upside down
                             {
-                                if (stampHeight)
-                                {
-                                    if (yValue >= stampHeight && models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1] < stampHeight)
-                                        models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1] = stampHeight;   
-                                    else if (yValue < stampHeight && models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1] < yValue)
-                                        models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1] = yValue;   
-                                }
+                                dist = xzDistance(Vector2{hitPosition.position.x, hitPosition.position.z}, vertexPos) - innerRadius; // distance from the middle of the selection
+                                
+                                if (dist < 0) // the vertices inside inner radius will be at y = 0
+                                    vertexY = 0;
                                 else
-                                {
-                                    if (models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1] < yValue)
-                                        models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1] = yValue;   
-                                }
+                                    vertexY = dist*sinf(stampAngle*DEG2RAD)/sinf((180 - (90 + stampAngle))*DEG2RAD); 
                             }
                             else
-                            {
-                                if (stampHeight)
-                                {
-                                    if (yValue <= stampHeight)
-                                        models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1] = yValue; 
-                                    else
-                                        models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1] = stampHeight; 
-                                }
-                                else
-                                    models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1] = yValue;
-                            }
+                                vertexY = dist*sinf(stampAngle*DEG2RAD)/sinf((180 - (90 + stampAngle))*DEG2RAD);
+                            
+                            if (vertexY > heightCap) // if the vertex is within the inner radius, limit its height extention
+                                vertexY = heightCap;
+                            
+                            if (stampInvert) // invert vertexY
+                                vertexY = -vertexY;
+                            
+                            if (stampOffset != 0) // add stamp offset
+                                vertexY += stampOffset;
+                            
+                            if (!rayCollision2d) // if the mouse cursor mode is 3d, add the hit position y to vertexY
+                                vertexY += hitPosition.position.y;
+                                
+                            if (stampHeight && vertexY > stampHeight) // dont allow vertexY to go higher than what stampHeight (cut off) is set to
+                                vertexY = stampHeight;
+                                
+                            if (raiseOnly && vertexY < yValue) // if raise only is on and vertex has been lowered, reverse it
+                                vertexY = yValue;
+                                
+                            if (lowerOnly && vertexY > yValue) // if lower only is on and vertex has been raised, reverse it
+                                vertexY = yValue;
                         }
                     }
                     
@@ -2248,7 +2380,7 @@ int main()
                 }                 
             }
             
-            if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_D) && !vertexSelection.empty())
+            if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_D) && !vertexSelection.empty()) // deselect
             {
                 vertexSelection.clear();
             }
@@ -2346,7 +2478,27 @@ int main()
                 }
                 case InputFocus::STAMP_HEIGHT:
                 {
-                    ProcessInput(GetKeyPressed(), stampHeightString, stampHeight, inputFocus, 5);
+                    int key = GetKeyPressed();
+                    
+                    if (((key >= 48 && key <= 57) || key == 46) && ((int)stampHeightString.size() < 5))
+                    {
+                        stampHeightString.push_back((char)key);
+                    }
+
+                    if (IsKeyPressed(KEY_BACKSPACE) && !stampHeightString.empty())
+                        stampHeightString.pop_back();
+                    
+                    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))
+                    {
+                        if (stampHeightString.empty())
+                            inputFocus = InputFocus::NONE;
+                        else
+                        {
+                            stampHeight = stof(stampHeightString);
+                            inputFocus = InputFocus::NONE; 
+                        }
+                    }
+                    
                     break;
                 }
                 case InputFocus::TOOL_STRENGTH:
@@ -2512,7 +2664,27 @@ int main()
                 }
                 case InputFocus::STAMP_OFFSET:
                 {
-                    ProcessInput(GetKeyPressed(), stampOffsetString, stampOffset, inputFocus, 5);
+                    int key = GetKeyPressed();
+                    
+                    if (((key >= 48 && key <= 57) || key == 46) && ((int)stampOffsetString.size() < 5))
+                    {
+                        stampOffsetString.push_back((char)key);
+                    }
+
+                    if (IsKeyPressed(KEY_BACKSPACE) && !stampOffsetString.empty())
+                        stampOffsetString.pop_back();
+                    
+                    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))
+                    {
+                        if (stampOffsetString.empty())
+                            inputFocus = InputFocus::NONE;
+                        else
+                        {
+                            stampOffset = stof(stampOffsetString);
+                            inputFocus = InputFocus::NONE; 
+                        }
+                    }
+                    
                     break;
                 }
             }
@@ -2866,16 +3038,16 @@ int main()
                             DrawText("Ghost Mesh:", toolButtonAnchor.x + 5, toolButtonAnchor.y + 352, 11, BLACK);
                             
                             if (stampFlip)
-                                DrawText("+", stampFlipBox.x + 2, stampFlipBox.y - 2, 20, RED);
+                                DrawText("+", stampFlipBox.x + 2, stampFlipBox.y - 2, 20, BLACK);
                             
                             if (stampInvert)
-                                DrawText("+", stampInvertBox.x + 2, stampInvertBox.y - 2, 20, RED);
+                                DrawText("+", stampInvertBox.x + 2, stampInvertBox.y - 2, 20, BLACK);
                             
                             if (stampStretch)
                                 DrawText("+", stampStretchBox.x + 2, stampStretchBox.y - 2, 20, BLACK);
                             
-                            if (ghostMesh)
-                                DrawText("+", ghostMeshBox.x + 2, ghostMeshBox.y - 2, 20, RED);
+                            if (useGhostMesh)
+                                DrawText("+", ghostMeshBox.x + 2, ghostMeshBox.y - 2, 20, BLACK);
                             
                             if (inputFocus == InputFocus::STAMP_ANGLE)
                                 DrawRectangleLinesEx(stampAngleBox, 1, BLACK);
@@ -3105,7 +3277,6 @@ int main()
 // shading based on angle
 // smooth tool angle clamp
 // slope finder: find the slope between two points
-// adjust stamp max height with movement (for stretch smoothness)
 // camera lock onto hitposition at certain angle and distance
 
 // -crash after ~141 history steps (if 3x3+ mesh?)
@@ -4149,6 +4320,41 @@ bool operator== (const ModelVertex &mv1, const ModelVertex &mv2)
 }
 
 
+Mesh CopyMesh(const Mesh& mesh)
+{
+    // (doesnt copy animation data)
+    Mesh newMesh = { 0 };
+    newMesh.vboId = (unsigned int *)RL_CALLOC(7, sizeof(unsigned int)); // (MAX_MESH_VBO = 7)
+    
+    newMesh.vertexCount = mesh.vertexCount;
+    newMesh.triangleCount = mesh.triangleCount;
+    
+    newMesh.vertices = (float *)RL_MALLOC(mesh.vertexCount*3*sizeof(float));
+    newMesh.normals = (float *)RL_MALLOC(mesh.vertexCount*3*sizeof(float));
+    newMesh.texcoords = (float *)RL_MALLOC(mesh.vertexCount*2*sizeof(float));
+    newMesh.colors = NULL;
+    
+    for (int i = 0; i < mesh.vertexCount*3; i++)
+    {
+        newMesh.vertices[i] = mesh.vertices[i];
+    }
+    
+    for (int i = 0; i < mesh.vertexCount*3; i++)
+    {
+        newMesh.normals[i] = mesh.normals[i];
+    }
+    
+    for (int i = 0; i < mesh.vertexCount*2; i++)
+    {
+        newMesh.texcoords[i] = mesh.texcoords[i];
+    }
+    
+    rlLoadMesh(&newMesh, false);
+    
+    return newMesh;
+}
+
+
 bool operator!= (const ModelVertex &mv1, const ModelVertex &mv2)
 {
     return !(mv1 == mv2);
@@ -4195,9 +4401,6 @@ bool operator!= (const ModelVertex &mv, const VertexState &vs)
 {
     return !(vs == mv);
 }
-
-
-
 
 
 
