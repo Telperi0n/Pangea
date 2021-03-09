@@ -62,35 +62,14 @@ typedef enum
     MOVE_DOWN 
 } CameraMove;
 
-struct ModelVertex;
-
 struct VertexState
 {
     Vector2 coords; // coords of the vertex's model
-    int vertexIndex; // which in Mesh::vertices cooresponds to the x value
-    float y;
+    int index; // which in Mesh::vertices corresponds to the x value
+    float y; // y value of the vertex
     
     friend bool operator== (const VertexState &vs1, const VertexState &vs2);
     friend bool operator!= (const VertexState &vs1, const VertexState &vs2);
-    
-    friend bool operator== (const VertexState &vs, const ModelVertex &mv);
-    friend bool operator!= (const ModelVertex &mv, const VertexState &vs);
-    friend bool operator== (const VertexState &vs, const ModelVertex &mv);
-    friend bool operator!= (const ModelVertex &mv, const VertexState &vs);
-};
-
-struct ModelVertex // saves the index of the vertex in the model's mesh as well as the models coordinates 
-{
-    Vector2 coords;
-    int index;
-    
-    friend bool operator== (const ModelVertex &mv1, const ModelVertex &mv2);
-    friend bool operator!= (const ModelVertex &mv1, const ModelVertex &mv2);
-    
-    friend bool operator== (const ModelVertex &mv, const VertexState &vs);
-    friend bool operator!= (const VertexState &vs, const ModelVertex &mv);
-    friend bool operator== (const ModelVertex &mv, const VertexState &vs);
-    friend bool operator!= (const VertexState &vs, const ModelVertex &mv);
 };
 
 struct ModelSelection
@@ -136,7 +115,9 @@ void FillTerrainCells(ModelSelection& modelSelection, const std::vector<std::vec
 
 void UpdateCharacterCamera(Camera* camera, const std::vector<std::vector<Model>>& models, ModelSelection& terrainCells); // custom update camera function for character camera
 
-void UpdateFreeCamera(Camera* camera); // camera update function for free fly
+void UpdatePerspectiveCamera(Camera* camera); // camera update function for perspective mode
+
+void UpdateOrthographicCamera(Camera* camera); // camera update function for orthographic mode
 
 void PrintBoxInfo(Rectangle box, InputFocus currentFocus, InputFocus matchingFocus, const std::string& s, float info); // print into box using default text params
 
@@ -144,15 +125,15 @@ void PrintBoxInfo(Rectangle box, InputFocus currentFocus, InputFocus matchingFoc
 
 void ProcessInput(int key, std::string& s, float& input, InputFocus& inputFocus, int maxSize); // modify string with input and store input as a float. changes input focus as necessary
 
-std::vector<ModelVertex> FindVertexSelection(const std::vector<std::vector<Model>>& models, const ModelSelection& modelSelection, const RayHitInfo hitPosition, float selectRadius); // find the vertices within the selection radius of the ray hit position
+std::vector<VertexState> FindVertexSelection(const std::vector<std::vector<Model>>& models, const ModelSelection& modelSelection, const RayHitInfo hitPosition, float selectRadius); // find the vertices within the selection radius of the ray hit position
 
 void FindStampPoints(float stampRotationAngle, float stampStretchLength, Vector2& outVec1, Vector2& outVec2, Vector2 stampAnchor); // finds the ends of the stamp tool when stretch is active
 
 float PointSegmentDistance(Vector2 point, Vector2 segmentPoint1, Vector2 segmentPoint2); // shortest distance from a point to a line segment
 
-bool IsEqualF(float a, float b); // compare two floats
-
 Mesh CopyMesh(const Mesh& mesh); // do a deep copy of a mesh
+
+void Smooth(std::vector<std::vector<Model>>& models, const std::vector<VertexState>& vertices, int modelVertexWidth, int modelVertexHeight, int canvasWidth, int canvasHeight); // do a smooth operation on the vertices
 
 
 
@@ -178,9 +159,9 @@ static int cameraMoveControl[6]  = { 'W', 'S', 'D', 'A', 'E', 'Q' };
 
 int main()
 {
-    const int windowWidth = 1270;
-    const int windowHeight = 720;
-    const int maxSteps = 5;   // number of changes to keep track of for the history
+    const int windowWidth = 1800;//1270;
+    const int windowHeight = 900;//720;
+    const int maxSteps = 10;   // number of changes to keep track of for the history
     const int modelVertexWidth = 120; // 360x360 aprox max before fps <60 with raycollision
     const int modelVertexHeight = 120;  
     const int modelWidth = 12;
@@ -295,6 +276,7 @@ int main()
     
     // CAMERA PANEL
     Rectangle characterButton = {63, 55, 33, 33};
+    Rectangle cameraTypeBox = {66, 160, 30, 14};
     
     // TOOL PANEL
     Rectangle elevToolButton = {toolButtonAnchor.x + 16, toolButtonAnchor.y + 35, 25, 25};
@@ -332,6 +314,8 @@ int main()
     Rectangle stampOffsetBox = {toolButtonAnchor.x + 66, toolButtonAnchor.y + 331, 30, 14};
     Rectangle ghostMeshBox = {toolButtonAnchor.x + 82, toolButtonAnchor.y + 350, 14, 14};
     
+    Rectangle smoothMeshesButton = {toolButtonAnchor.x + 10, toolButtonAnchor.y + 160, 80, 28};
+    
     
     BrushTool brush = BrushTool::NONE;
     Panel panel = Panel::NONE;
@@ -351,7 +335,7 @@ int main()
     ChangeDirectory("C:/Users/msgs4/Desktop/Pangea");
     
     SetTargetFPS(60);
-    
+    bool debug = 0;
     while (!WindowShouldClose())
     {
         if (characterMode)
@@ -393,7 +377,7 @@ int main()
         else
         {
             if (inputFocus == InputFocus::NONE) // dont move the camera if typing
-                UpdateFreeCamera(&camera);
+                UpdatePerspectiveCamera(&camera);
             
             RayHitInfo hitPosition;
             hitPosition.hit = false;
@@ -401,13 +385,13 @@ int main()
             Vector2 stamp1; 
             Vector2 stamp2;
             
-            std::vector<ModelVertex> vertexIndices;   // information of the vertices within the select radius
+            std::vector<VertexState> vertexIndices;   // information of the vertices within the select radius
             
             Vector2 mousePosition = GetMousePosition();
             bool mousePressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
             bool mouseDown = IsMouseButtonDown(MOUSE_LEFT_BUTTON);
             
-            if (mouseDown && (IsKeyDown(KEY_R) || IsKeyDown(KEY_V))) // check if keys are down that perclude mouse click edits from happening
+            if (mouseDown && (IsKeyDown(KEY_R) || IsKeyDown(KEY_V)) || IsKeyDown(KEY_G)) // check if keys are down that perclude mouse click edits from happening
             {
                 mouseDown = false;
             }
@@ -630,319 +614,335 @@ int main()
             }
             else if (CheckCollisionPointRec(mousePosition, UI)) 
             {
-                switch (panel)
+                if (mousePressed)
                 {
-                    case Panel::NONE:
+                    switch (panel)
                     {
-                        if(CheckCollisionPointRec(mousePosition, heightmapTab) && mousePressed)
+                        case Panel::NONE:
                         {
-                            panel = Panel::HEIGHTMAP;
-                            
-                            cameraTab.y = 657;
-                            toolsTab.y = 680;
-                            panel1.height = 637;
-                            panel2.y = 677;
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, cameraTab) && mousePressed)
-                        {
-                            panel = Panel::CAMERA;
-                            
-                            panel2.height = 637;
-                            toolsTab.y = 680;
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, toolsTab) && mousePressed)
-                        {
-                            panel = Panel::TOOLS;
-                        }
-                        
-                        break;
-                    }
-                    case Panel::HEIGHTMAP:
-                    {
-                        if(CheckCollisionPointRec(mousePosition, heightmapTab) && mousePressed)
-                        {
-                            panel = Panel::NONE;
-                            
-                            cameraTab.y = 23;
-                            toolsTab.y = 46;
-                            panel1.height = 3;
-                            panel2.y = 43;
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, cameraTab) && mousePressed)
-                        {
-                            panel = Panel::CAMERA;
-                            
-                            panel1.height = 3;
-                            panel2.height = 637;
-                            panel2.y = 43;
-                            cameraTab.y = 23;
-                            toolsTab.y = 680;
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, toolsTab) && mousePressed)
-                        {
-                            panel = Panel::TOOLS;
-                            
-                            cameraTab.y = 23;
-                            toolsTab.y = 46;
-                            panel1.height = 3;
-                            panel2.y = 43;
-                        }
-                        
-                        if (CheckCollisionPointRec(mousePosition, exportButton) && mousePressed) // export heightmap button
-                        {
-                            brush = BrushTool::NONE;
-                            inputFocus = InputFocus::NONE;
-                            
-                            showSaveWindow = true;
-                            
-                            highestY = FLT_MIN; // reset highest and lowest values
-                            lowestY = FLT_MAX;
-                            
-                            for (int i = 0; i < models.size(); i++) // find the highest and lowest values to display them in the save window
+                            if (CheckCollisionPointRec(mousePosition, heightmapTab))
                             {
-                                for (int j = 0; j < models[i].size(); j++)
-                                {
-                                    for (int k = 0; k < (models[i][j].meshes[0].vertexCount * 3) - 2; k += 3) 
-                                    {
-                                        if (models[i][j].meshes[0].vertices[k+1] > highestY)
-                                            highestY = models[i][j].meshes[0].vertices[k+1];
-                                            
-                                        if (models[i][j].meshes[0].vertices[k+1] < lowestY)
-                                            lowestY = models[i][j].meshes[0].vertices[k+1];
-                                    }
-                                }
-                            }
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, meshGenButton) && mousePressed && (!xMeshString.empty() || canvasWidth > 0) && (!zMeshString.empty() || canvasHeight > 0)) // add or remove models
-                        {
-                            int xInput;
-                            int zInput;
-                            
-                            if (!xMeshString.empty())
-                                xInput = std::stoi(xMeshString);
-                            else
-                                xInput = canvasWidth;
-                            
-                            if (!zMeshString.empty())
-                                zInput = std::stoi(zMeshString);
-                            else
-                                zInput = canvasHeight;
-                            
-                            int xDifference = -(canvasWidth - xInput); // negate the difference so that positive is how many to add, negative to subtract
-                            int zDifference = -(canvasHeight - zInput);
-                            
-                            if (xDifference > 0) 
-                            {
-                                models.reserve(xInput);
-                                models.resize(xInput);
-                            }
-                            else if (xDifference < 0)
-                            {
-                                models.erase(models.begin() + (models.size() + xDifference), models.end());
+                                panel = Panel::HEIGHTMAP;
                                 
-                                history.clear(); // clear history if the canvas is shrunk so that undo operations dont go out of bounds
-                                stepIndex = 0;
-                                historyFlag = false;
+                                cameraTab.y = 657;
+                                toolsTab.y = 680;
+                                panel1.height = 637;
+                                panel2.y = 677;
                             }
-                            
-                            canvasWidth = xInput;
-                            
-                            if (zDifference < 0)
+                            else if (CheckCollisionPointRec(mousePosition, cameraTab))
                             {
-                                history.clear(); // clear history if the canvas is shrunk so that undo operations dont go out of bounds
-                                stepIndex = 0;
-                                historyFlag = false;  
-                            }
-                            
-                            if (canvasWidth)
-                            {
-                                int newLength = canvasHeight + zDifference;
+                                panel = Panel::CAMERA;
                                 
-                                for (int i = 0; i < canvasWidth; i++)
+                                panel2.height = 637;
+                                toolsTab.y = 680;
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, toolsTab))
+                            {
+                                panel = Panel::TOOLS;
+                            }
+                            
+                            break;
+                        }
+                        case Panel::HEIGHTMAP:
+                        {
+                            if (CheckCollisionPointRec(mousePosition, heightmapTab))
+                            {
+                                panel = Panel::NONE;
+                                
+                                cameraTab.y = 23;
+                                toolsTab.y = 46;
+                                panel1.height = 3;
+                                panel2.y = 43;
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, cameraTab))
+                            {
+                                panel = Panel::CAMERA;
+                                
+                                panel1.height = 3;
+                                panel2.height = 637;
+                                panel2.y = 43;
+                                cameraTab.y = 23;
+                                toolsTab.y = 680;
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, toolsTab))
+                            {
+                                panel = Panel::TOOLS;
+                                
+                                cameraTab.y = 23;
+                                toolsTab.y = 46;
+                                panel1.height = 3;
+                                panel2.y = 43;
+                            }
+                            
+                            if (CheckCollisionPointRec(mousePosition, exportButton)) // export heightmap button
+                            {
+                                brush = BrushTool::NONE;
+                                inputFocus = InputFocus::NONE;
+                                
+                                showSaveWindow = true;
+                                
+                                highestY = FLT_MIN; // reset highest and lowest values
+                                lowestY = FLT_MAX;
+                                
+                                for (int i = 0; i < models.size(); i++) // find the highest and lowest values to display them in the save window
                                 {
-                                    if (models[i].size() > newLength) // z will need to be cut in existing columns, but may have to be expanded in new ones
+                                    for (int j = 0; j < models[i].size(); j++)
                                     {
-                                        models[i].erase(models[i].begin() + newLength, models[i].end());
-                                    }
-                                    else
-                                    {
-                                        models[i].reserve(newLength);
-                                        
-                                        while (models[i].size() < newLength)
+                                        for (int k = 0; k < (models[i][j].meshes[0].vertexCount * 3) - 2; k += 3) 
                                         {
-                                            int j = models[i].size();
-                                            
-                                            Image tempImage = GenImageColor(modelVertexWidth, modelVertexHeight, BLACK);
-                                            Model model = LoadModelFromMesh(GenMeshHeightmap(tempImage, (Vector3){ modelWidth, 0, modelHeight }));  
-                                            UnloadImage(tempImage);
-                                            
-                                            Color* pixels = GenHeightmap(model, modelVertexWidth, modelVertexHeight, highestY, lowestY, 1);
-                                            Image image = LoadImageEx(pixels, modelVertexWidth - 1, modelVertexHeight - 1);
-                                            Texture2D tex = LoadTextureFromImage(image); // create a texture from the heightmap. height and width -1 so that pixels and polys are 1:1
-                                            RL_FREE(pixels);
-                                            UnloadImage(image);
-                                            
-                                            model.materials[0].maps[MAP_DIFFUSE].texture = tex;
-                                            
-                                            float xOffset = (float)i * (modelWidth - (1 / (float)modelVertexWidth) * modelWidth);
-                                            float zOffset = (float)j * (modelHeight - (1 / (float)modelVertexHeight) * modelHeight);
-                                            
-                                            for (int i = 0; i < (model.meshes[0].vertexCount * 3) - 2; i += 3) // adjust vertex locations. (probably more sophisticated to do something with the transform but w/e)
-                                            {
-                                                model.meshes[0].vertices[i] += xOffset;
-                                                model.meshes[0].vertices[i + 2] += zOffset;
-                                            }
-
-                                            models[i].push_back(model);
-                                        }                             
-                                    }   
+                                            if (models[i][j].meshes[0].vertices[k+1] > highestY)
+                                                highestY = models[i][j].meshes[0].vertices[k+1];
+                                                
+                                            if (models[i][j].meshes[0].vertices[k+1] < lowestY)
+                                                lowestY = models[i][j].meshes[0].vertices[k+1];
+                                        }
+                                    }
+                                }
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, meshGenButton) && (!xMeshString.empty() || canvasWidth > 0) && (!zMeshString.empty() || canvasHeight > 0)) // add or remove models
+                            {
+                                int xInput;
+                                int zInput;
+                                
+                                if (!xMeshString.empty())
+                                    xInput = std::stoi(xMeshString);
+                                else
+                                    xInput = canvasWidth;
+                                
+                                if (!zMeshString.empty())
+                                    zInput = std::stoi(zMeshString);
+                                else
+                                    zInput = canvasHeight;
+                                
+                                int xDifference = -(canvasWidth - xInput); // negate the difference so that positive is how many to add, negative to subtract
+                                int zDifference = -(canvasHeight - zInput);
+                                
+                                if (xDifference > 0) 
+                                {
+                                    models.reserve(xInput);
+                                    models.resize(xInput);
+                                }
+                                else if (xDifference < 0)
+                                {
+                                    models.erase(models.begin() + (models.size() + xDifference), models.end());
+                                    
+                                    history.clear(); // clear history if the canvas is shrunk so that undo operations dont go out of bounds
+                                    stepIndex = 0;
+                                    historyFlag = false;
                                 }
                                 
-                                canvasHeight = zInput; 
-                            }
-                            
-                            if (modelSelection.selection.empty() && !models.empty()) // if models selection is empty, add the first model as the default selection 
-                            {
-                                modelSelection.selection.push_back(Vector2{0, 0});
+                                canvasWidth = xInput;
                                 
-                                modelSelection.width = 1;
-                                modelSelection.height = 1;
-                                modelSelection.topLeft = Vector2{0, 0};
-                                modelSelection.bottomRight = Vector2{0, 0};
-                            }
-                            else
-                            {
-                                if (canvasWidth <= modelSelection.topLeft.x || canvasHeight <= modelSelection.topLeft.y) // if the canvas was shrunk past the selection, clear selection
+                                if (zDifference < 0)
                                 {
-                                    modelSelection.selection.clear();
-                                    modelSelection.width = 0;
-                                    modelSelection.height = 0;
+                                    history.clear(); // clear history if the canvas is shrunk so that undo operations dont go out of bounds
+                                    stepIndex = 0;
+                                    historyFlag = false;  
+                                }
+                                
+                                if (canvasWidth)
+                                {
+                                    int newLength = canvasHeight + zDifference;
+                                    
+                                    for (int i = 0; i < canvasWidth; i++)
+                                    {
+                                        if (models[i].size() > newLength) // z will need to be cut in existing columns, but may have to be expanded in new ones
+                                        {
+                                            models[i].erase(models[i].begin() + newLength, models[i].end());
+                                        }
+                                        else
+                                        {
+                                            models[i].reserve(newLength);
+                                            
+                                            while (models[i].size() < newLength)
+                                            {
+                                                int j = models[i].size();
+                                                
+                                                Image tempImage = GenImageColor(modelVertexWidth, modelVertexHeight, BLACK);
+                                                Model model = LoadModelFromMesh(GenMeshHeightmap(tempImage, (Vector3){ modelWidth, 0, modelHeight }));  
+                                                UnloadImage(tempImage);
+                                                
+                                                Color* pixels = GenHeightmap(model, modelVertexWidth, modelVertexHeight, highestY, lowestY, 1);
+                                                Image image = LoadImageEx(pixels, modelVertexWidth - 1, modelVertexHeight - 1);
+                                                Texture2D tex = LoadTextureFromImage(image); // create a texture from the heightmap. height and width -1 so that pixels and polys are 1:1
+                                                RL_FREE(pixels);
+                                                UnloadImage(image);
+                                                
+                                                model.materials[0].maps[MAP_DIFFUSE].texture = tex;
+                                                
+                                                float xOffset = (float)i * (modelWidth - (1 / (float)modelVertexWidth) * modelWidth);
+                                                float zOffset = (float)j * (modelHeight - (1 / (float)modelVertexHeight) * modelHeight);
+                                                
+                                                for (int i = 0; i < (model.meshes[0].vertexCount * 3) - 2; i += 3) // adjust vertex locations. (probably more sophisticated to do something with the transform but w/e)
+                                                {
+                                                    model.meshes[0].vertices[i] += xOffset;
+                                                    model.meshes[0].vertices[i + 2] += zOffset;
+                                                }
+
+                                                models[i].push_back(model);
+                                            }                             
+                                        }   
+                                    }
+                                    
+                                    canvasHeight = zInput; 
+                                }
+                                
+                                if (modelSelection.selection.empty() && !models.empty()) // if models selection is empty, add the first model as the default selection 
+                                {
+                                    modelSelection.selection.push_back(Vector2{0, 0});
+                                    
+                                    modelSelection.width = 1;
+                                    modelSelection.height = 1;
                                     modelSelection.topLeft = Vector2{0, 0};
-                                    modelSelection.bottomRight = Vector2{0, 0};                              
+                                    modelSelection.bottomRight = Vector2{0, 0};
                                 }
                                 else
                                 {
-                                    if (canvasWidth <= modelSelection.bottomRight.x || canvasHeight <= modelSelection.bottomRight.y) // if the canvas was shrunk past the selection boundary, shrink the selection to match
+                                    if (canvasWidth <= modelSelection.topLeft.x || canvasHeight <= modelSelection.topLeft.y) // if the canvas was shrunk past the selection, clear selection
                                     {
-                                        for (int i = 0; i < modelSelection.selection.size(); i++) // remove models from the selection that exceed canvas size
+                                        modelSelection.selection.clear();
+                                        modelSelection.width = 0;
+                                        modelSelection.height = 0;
+                                        modelSelection.topLeft = Vector2{0, 0};
+                                        modelSelection.bottomRight = Vector2{0, 0};                              
+                                    }
+                                    else
+                                    {
+                                        if (canvasWidth <= modelSelection.bottomRight.x || canvasHeight <= modelSelection.bottomRight.y) // if the canvas was shrunk past the selection boundary, shrink the selection to match
                                         {
-                                            if (modelSelection.selection[i].x >= canvasWidth || modelSelection.selection[i].y >= canvasHeight)
+                                            for (int i = 0; i < modelSelection.selection.size(); i++) // remove models from the selection that exceed canvas size
                                             {
-                                                modelSelection.selection.erase(modelSelection.selection.begin() + i);
-                                                i--;
+                                                if (modelSelection.selection[i].x >= canvasWidth || modelSelection.selection[i].y >= canvasHeight)
+                                                {
+                                                    modelSelection.selection.erase(modelSelection.selection.begin() + i);
+                                                    i--;
+                                                }
                                             }
+                                            
+                                            modelSelection.width = canvasWidth - modelSelection.topLeft.x;
+                                            modelSelection.height = canvasHeight - modelSelection.topLeft.y;
+                                            modelSelection.bottomRight = Vector2{canvasWidth - 1, canvasHeight - 1};                               
                                         }
-                                        
-                                        modelSelection.width = canvasWidth - modelSelection.topLeft.x;
-                                        modelSelection.height = canvasHeight - modelSelection.topLeft.y;
-                                        modelSelection.bottomRight = Vector2{canvasWidth - 1, canvasHeight - 1};                               
                                     }
                                 }
-                            }
-                            
-                            modelSelection.expandedSelection.clear();
-                            SetExSelection(modelSelection, canvasWidth, canvasHeight);  
-                            
-                            for (int i = 0; i < models.size(); i++)
-                            {
-                                for (int j = 0; j < models[i].size(); j++)
+                                
+                                modelSelection.expandedSelection.clear();
+                                SetExSelection(modelSelection, canvasWidth, canvasHeight);  
+                                
+                                for (int i = 0; i < models.size(); i++)
                                 {
-                                    rlUpdateBuffer(models[i][j].meshes[0].vboId[0], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
-                                    rlUpdateBuffer(models[i][j].meshes[0].vboId[2], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
-                                }
-                            }
-                            
-                            xMeshString.clear();
-                            zMeshString.clear();
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, xMeshBox) && mousePressed)
-                        {
-                            inputFocus = InputFocus::X_MESH;
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, zMeshBox) && mousePressed)
-                        {
-                            inputFocus = InputFocus::Z_MESH;
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, updateTextureButton) && mousePressed && !models.empty()) // find the lowest and highest point on the mesh
-                        {
-                            float maxY = models[0][0].meshes[0].vertices[1]; // start with the first y value;
-                            float minY = models[0][0].meshes[0].vertices[1];
-                            
-                            for (int i = 0; i < models.size(); i++)
-                            {
-                                for (int j = 0; j < models[i].size(); j++)
-                                {
-                                    for (int k = 0; k < (models[i][j].meshes[0].vertexCount * 3) - 2; k += 3) // check this models vertices
+                                    for (int j = 0; j < models[i].size(); j++)
                                     {
-                                        if (models[i][j].meshes[0].vertices[k + 1] > maxY)
-                                            maxY = models[i][j].meshes[0].vertices[k + 1];
-                                        
-                                        if (models[i][j].meshes[0].vertices[k + 1] < minY)
-                                            minY = models[i][j].meshes[0].vertices[k + 1];
+                                        rlUpdateBuffer(models[i][j].meshes[0].vboId[0], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
+                                        rlUpdateBuffer(models[i][j].meshes[0].vboId[2], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
                                     }
                                 }
+                                
+                                xMeshString.clear();
+                                zMeshString.clear();
                             }
-                            
-                            highestY = maxY;
-                            lowestY = minY;
-                            
-                            UpdateHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY); 
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, loadButton) && mousePressed)
-                        {
-                            brush = BrushTool::NONE;
-                            inputFocus = InputFocus::NONE;
-                            
-                            showLoadWindow = true;
-                        }
-                        else if (mousePressed && CheckCollisionPointRec(mousePosition, directoryButton))
-                        {
-                            brush = BrushTool::NONE;
-                            inputFocus = InputFocus::NONE;
-                            
-                            showDirWindow = true;
-                        }
-                    
-                        break;
-                    }
-                    case Panel::CAMERA:
-                    {
-                        if (CheckCollisionPointRec(mousePosition, heightmapTab) && mousePressed)
-                        {
-                            panel = Panel::HEIGHTMAP;
-                            
-                            cameraTab.y = 657;
-                            panel1.height = 637;
-                            panel2.y = 677;
-                            panel2.height = 3;
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, cameraTab) && mousePressed)
-                        {
-                            panel = Panel::NONE;
-                            
-                            toolsTab.y = 46;
-                            panel2.y = 43;
-                            panel2.height = 3;
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, toolsTab) && mousePressed)
-                        {
-                            panel = Panel::TOOLS;
-                            
-                            toolsTab.y = 46;
-                            panel2.y = 43;
-                            panel2.height = 3;                       
-                        }
-                        else if (CheckCollisionPointRec(mousePosition, characterButton) && mousePressed)
-                        {
-                            brush = BrushTool::NONE;
-                            characterDrag = true;
-                        }
+                            else if (CheckCollisionPointRec(mousePosition, xMeshBox))
+                            {
+                                inputFocus = InputFocus::X_MESH;
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, zMeshBox))
+                            {
+                                inputFocus = InputFocus::Z_MESH;
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, updateTextureButton) && !models.empty()) // find the lowest and highest point on the mesh
+                            {
+                                float maxY = models[0][0].meshes[0].vertices[1]; // start with the first y value;
+                                float minY = models[0][0].meshes[0].vertices[1];
+                                
+                                for (int i = 0; i < models.size(); i++)
+                                {
+                                    for (int j = 0; j < models[i].size(); j++)
+                                    {
+                                        for (int k = 0; k < (models[i][j].meshes[0].vertexCount * 3) - 2; k += 3) // check this models vertices
+                                        {
+                                            if (models[i][j].meshes[0].vertices[k + 1] > maxY)
+                                                maxY = models[i][j].meshes[0].vertices[k + 1];
+                                            
+                                            if (models[i][j].meshes[0].vertices[k + 1] < minY)
+                                                minY = models[i][j].meshes[0].vertices[k + 1];
+                                        }
+                                    }
+                                }
+                                
+                                highestY = maxY;
+                                lowestY = minY;
+                                
+                                UpdateHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, loadButton))
+                            {
+                                brush = BrushTool::NONE;
+                                inputFocus = InputFocus::NONE;
+                                
+                                showLoadWindow = true;
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, directoryButton))
+                            {
+                                brush = BrushTool::NONE;
+                                inputFocus = InputFocus::NONE;
+                                
+                                showDirWindow = true;
+                            }
                         
-                        break;
-                    }
-                    case Panel::TOOLS:
-                    {
-                        if (mousePressed)
+                            break;
+                        }
+                        case Panel::CAMERA:
+                        {
+                            if (CheckCollisionPointRec(mousePosition, heightmapTab))
+                            {
+                                panel = Panel::HEIGHTMAP;
+                                
+                                cameraTab.y = 657;
+                                panel1.height = 637;
+                                panel2.y = 677;
+                                panel2.height = 3;
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, cameraTab))
+                            {
+                                panel = Panel::NONE;
+                                
+                                toolsTab.y = 46;
+                                panel2.y = 43;
+                                panel2.height = 3;
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, toolsTab))
+                            {
+                                panel = Panel::TOOLS;
+                                
+                                toolsTab.y = 46;
+                                panel2.y = 43;
+                                panel2.height = 3;                       
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, characterButton))
+                            {
+                                brush = BrushTool::NONE;
+                                characterDrag = true;
+                            }
+                            /*
+                            else if (CheckCollisionPointRec(mousePosition, cameraTypeBox))
+                            {
+                                if (camera.type == CAMERA_PERSPECTIVE)
+                                {
+                                    cameraAngle.x = 0;
+                                    cameraAngle.y = -1.5;
+                                    camera.target.x = camera.position.x;
+                                    camera.target.y = camera.position.y - 0.1;
+                                    camera.target.z = camera.position.z;
+                                    
+                                    camera.type = CAMERA_ORTHOGRAPHIC;
+                                }
+                                else
+                                    camera.type = CAMERA_PERSPECTIVE;
+                            }
+                            */
+                            break;
+                        }
+                        case Panel::TOOLS:
                         {
                             if (CheckCollisionPointRec(mousePosition, heightmapTab))
                             {
@@ -1009,8 +1009,8 @@ int main()
                                 HistoryUpdate(history, models, modelSelection.expandedSelection, stepIndex, maxSteps);
                                 historyFlag = true;
                                 
-                                float top = models[vertexSelection[0].coords.x][vertexSelection[0].coords.y].meshes[0].vertices[vertexSelection[0].vertexIndex + 1];
-                                float bottom = models[vertexSelection[(int)vertexSelection.size() - 1].coords.x][vertexSelection[(int)vertexSelection.size() - 1].coords.y].meshes[0].vertices[vertexSelection[(int)vertexSelection.size() - 1].vertexIndex + 1];
+                                float top = models[vertexSelection[0].coords.x][vertexSelection[0].coords.y].meshes[0].vertices[vertexSelection[0].index + 1];
+                                float bottom = models[vertexSelection[(int)vertexSelection.size() - 1].coords.x][vertexSelection[(int)vertexSelection.size() - 1].coords.y].meshes[0].vertices[vertexSelection[(int)vertexSelection.size() - 1].index + 1];
                                 
                                 if (top < bottom) // swap values if selection was made bottom to top
                                 {
@@ -1024,9 +1024,9 @@ int main()
                                 for (int i = 0; i < vertexSelection.size(); i++)
                                 {
                                     if (vertexSelection[i].y == 1) // flatten out the highest portion with the highest value
-                                        models[vertexSelection[i].coords.x][vertexSelection[i].coords.y].meshes[0].vertices[vertexSelection[i].vertexIndex + 1] = top;
+                                        models[vertexSelection[i].coords.x][vertexSelection[i].coords.y].meshes[0].vertices[vertexSelection[i].index + 1] = top;
                                     
-                                    models[vertexSelection[i].coords.x][vertexSelection[i].coords.y].meshes[0].vertices[vertexSelection[i].vertexIndex + 1] = top - (increment * (vertexSelection[i].y - 1));
+                                    models[vertexSelection[i].coords.x][vertexSelection[i].coords.y].meshes[0].vertices[vertexSelection[i].index + 1] = top - (increment * (vertexSelection[i].y - 1));
                                 } 
                                 
                                 for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
@@ -1051,8 +1051,6 @@ int main()
                             }
                             else if (CheckCollisionPointRec(mousePosition, meshSelectButton) && !models.empty()) // adjust model selection
                             {
-                                ModelSelection modelSelectionCopy = modelSelection;
-                                
                                 int xInput;
                                 int zInput;
                                 
@@ -1229,8 +1227,6 @@ int main()
                             }
                             else if (CheckCollisionPointRec(mousePosition, meshSelectUpButton) && !models.empty() && !modelSelection.selection.empty()) // shift model selection up
                             {
-                                ModelSelection modelSelectionCopy = modelSelection;
-                                
                                 if (modelSelection.topLeft.y != 0)
                                 {
                                     for (int i = 0; i < modelSelection.selection.size(); i++) // remove bottom row from selection
@@ -1257,8 +1253,6 @@ int main()
                             }
                             else if (CheckCollisionPointRec(mousePosition, meshSelectRightButton) && !models.empty() && !modelSelection.selection.empty()) // shift model selection right
                             {
-                                ModelSelection modelSelectionCopy = modelSelection;
-                                
                                 if (modelSelection.bottomRight.x != canvasWidth - 1)
                                 {
                                     for (int i = 0; i < modelSelection.selection.size(); i++) // remove left column from selection
@@ -1285,8 +1279,6 @@ int main()
                             }
                             else if (CheckCollisionPointRec(mousePosition, meshSelectLeftButton) && !models.empty() && !modelSelection.selection.empty()) // shift model selection left
                             {
-                                ModelSelection modelSelectionCopy = modelSelection;
-                                
                                 if (modelSelection.topLeft.x != 0)
                                 {
                                     for (int i = 0; i < modelSelection.selection.size(); i++) // remove rightmost column from selection
@@ -1313,8 +1305,6 @@ int main()
                             }
                             else if (CheckCollisionPointRec(mousePosition, meshSelectDownButton) && !models.empty() && !modelSelection.selection.empty()) // shift model selection down
                             {
-                                ModelSelection modelSelectionCopy = modelSelection;
-                                
                                 if (modelSelection.bottomRight.y != canvasHeight - 1)
                                 {
                                     for (int i = 0; i < modelSelection.selection.size(); i++) // remove top row from selection
@@ -1434,9 +1424,40 @@ int main()
                                     useGhostMesh = true;
                                 }
                             }
+                            else if (brush == BrushTool::SMOOTH && CheckCollisionPointRec(mousePosition, smoothMeshesButton) && !modelSelection.selection.empty()) // smooth all selected models
+                            {
+                                // note that the changes done by this operation arent saved by history
+                                std::vector<VertexState> vertices; // vertices to pass to smooth
+                                
+                                for (int i = 0; i < modelSelection.selection.size(); i++) // loop through all selected models
+                                {
+                                    for (int j = 0; j < models[modelSelection.selection[i].x][modelSelection.selection[i].y].meshes[0].vertexCount; j++) // loop through vertices
+                                    {
+                                        VertexState vs;
+                                        
+                                        vs.coords = modelSelection.selection[i];
+                                        vs.index = j * 3;
+                                        
+                                        vertices.push_back(vs); // add this vertex's info 
+                                    }
+                                }
+                                
+                                Smooth(models, vertices, modelVertexWidth, modelVertexHeight, canvasWidth, canvasHeight);
+                                
+                                for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                                {
+                                    rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[0], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
+                                    rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[2], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
+                                }
+                                
+                                for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                                {
+                                    UpdateHeightmap(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                                }
+                            }
+                            
+                            break;
                         }
-                        
-                        break;
                     }
                 }
             }
@@ -1468,47 +1489,115 @@ int main()
                 
                 if (IsKeyDown(KEY_R) && mousePressed && !models.empty()) // change selection radius by height eye dropper style
                 {
-                    if (!models.empty())
+                    for (int i = 0; i < models.size(); i++) // test ray against all models
                     {
-                        for (int i = 0; i < models.size(); i++) // test ray against all models
+                        for (int j = 0; j < models[i].size(); j++)
                         {
-                            for (int j = 0; j < models[i].size(); j++)
-                            {
-                                hitPosition = GetCollisionRayModel2(ray, &models[i][j]); 
-                                
-                                if (hitPosition.hit) // if collision is found, record which and break the search
-                                {
-                                    selectRadius = (hitPosition.position.y / sinf(stampAngle*DEG2RAD)) * sinf((90 - stampAngle)*DEG2RAD);
-                                    
-                                    break;
-                                }
-                            }
+                            hitPosition = GetCollisionRayModel2(ray, &models[i][j]); 
                             
-                            if (hitPosition.hit) break;
+                            if (hitPosition.hit) // if collision is found, record which and break the search
+                            {
+                                selectRadius = (hitPosition.position.y / sinf(stampAngle*DEG2RAD)) * sinf((90 - stampAngle)*DEG2RAD);
+                                
+                                break;
+                            }
                         }
+                        
+                        if (hitPosition.hit) break;
                     }
                 }
                 
                 if (IsKeyDown(KEY_V) && mousePressed && !models.empty()) // change stamp offset eye dropper style
                 {
-                    if (!models.empty())
+                    for (int i = 0; i < models.size(); i++) // test ray against all models
                     {
-                        for (int i = 0; i < models.size(); i++) // test ray against all models
+                        for (int j = 0; j < models[i].size(); j++)
                         {
-                            for (int j = 0; j < models[i].size(); j++)
-                            {
-                                hitPosition = GetCollisionRayModel2(ray, &models[i][j]); 
-                                
-                                if (hitPosition.hit) // if collision is found, record which and break the search
-                                {
-                                    stampOffset = hitPosition.position.y;
-                                    
-                                    break;
-                                }
-                            }
+                            hitPosition = GetCollisionRayModel2(ray, &models[i][j]); 
                             
-                            if (hitPosition.hit) break;
+                            if (hitPosition.hit) // if collision is found, record which and break the search
+                            {
+                                stampOffset = hitPosition.position.y;
+                                
+                                break;
+                            }
                         }
+                        
+                        if (hitPosition.hit) break;
+                    }
+                }
+                
+                if (IsKeyDown(KEY_G) && mousePressed && !models.empty()) // move model selection, centered on the model clicked on
+                {
+                    for (int i = 0; i < models.size(); i++) // test ray against all models
+                    {
+                        for (int j = 0; j < models[i].size(); j++)
+                        {
+                            hitPosition = GetCollisionRayModel2(ray, &models[i][j]); 
+                            
+                            if (hitPosition.hit) 
+                            {
+                                modelSelection.selection.clear();
+                                modelSelection.expandedSelection.clear();
+                                
+                                Vector2 topLeft; // the top left model of the new selection, start with i and j as coordinates
+                                topLeft.x = i;
+                                topLeft.y = j;
+                                
+                                if (modelSelection.width != 1) // if the width is 1, topLeft.x is already known
+                                {
+                                    if (!(modelSelection.width % 2)) // if the width is even, shift x by half with selection width - 1
+                                    {
+                                        topLeft.x -= (modelSelection.width / 2 - 1);
+                                    }
+                                    else // if the width is odd, shift x by half the selection width, remainder truncated
+                                    {
+                                        topLeft.x -= modelSelection.width / 2;
+                                    }
+                                }
+                                
+                                if (topLeft.x < 0) // if x was corrected past 0, set to 0
+                                    topLeft.x = 0;
+                                    
+                                if (modelSelection.height != 1) // if the height is 1, topLeft.y is already known
+                                {
+                                    if (!(modelSelection.height % 2)) // if the height is even, shift y by half with selection height - 1
+                                    {
+                                        topLeft.y -= (modelSelection.height / 2 - 1);
+                                    }
+                                    else // if the height is odd, shift x by half the selection height, remainder truncated
+                                    {
+                                        topLeft.y -= modelSelection.height / 2;
+                                    }
+                                }
+                                
+                                if (topLeft.y < 0) // if x was corrected past 0, set to 0
+                                    topLeft.y = 0;
+                                
+                                if (topLeft.x + modelSelection.width > canvasWidth) // make sure it wont extend out of bounds
+                                    topLeft.x = canvasWidth - modelSelection.width;
+                                
+                                if (topLeft.y + modelSelection.height > canvasHeight)
+                                    topLeft.y = canvasHeight - modelSelection.height;
+                                
+                                modelSelection.topLeft = topLeft;
+                                modelSelection.bottomRight = Vector2{topLeft.x + modelSelection.width - 1, topLeft.y + modelSelection.height - 1};
+                                
+                                for (int i2 = 0; i2 < modelSelection.width; i2++)
+                                {
+                                    for (int j2 = 0; j2 < modelSelection.height; j2++)
+                                    {
+                                        modelSelection.selection.push_back(Vector2{i2 + topLeft.x, j2 + topLeft.y});
+                                    }
+                                }
+                                
+                                SetExSelection(modelSelection, canvasWidth, canvasHeight);
+                                
+                                break;
+                            }
+                        }
+                        
+                        if (hitPosition.hit) break;
                     }
                 }
                 
@@ -1734,7 +1823,7 @@ int main()
                             {
                                 VertexState temp;
                                 temp.coords = vertexIndices[i].coords;
-                                temp.vertexIndex = vertexIndices[i].index;
+                                temp.index = vertexIndices[i].index;
                                 temp.y = 1; // y is used here to represent when this vertex was selected
                                 vertexSelection.push_back(temp);
                             }
@@ -1760,7 +1849,7 @@ int main()
                                 {
                                     VertexState temp;
                                     temp.coords = vertexIndices[i].coords;
-                                    temp.vertexIndex = vertexIndices[i].index;
+                                    temp.index = vertexIndices[i].index;
                                     temp.y = selectionStep + 1; // y is used here to represent when this vertex was selected
                                     vertexSelection.push_back(temp);
                                 }
@@ -1777,181 +1866,35 @@ int main()
                         historyFlag = true;
                     }
                     
-                    std::vector<VertexState> changes; //  calculate and then make changes all at once rather than one at a time
-
                     if (selectionMask) // if selection mask is on, dont modify selected vertices
                     {
+                        std::vector<VertexState> vertices;
+                        
                         for (int i = 0; i < vertexIndices.size(); ++i) // TODO change to a better search once vertexSelection is sorted
                         {
-                            bool match = false;
+                            bool selected = false;
                             
                             for (int j = 0; j < vertexSelection.size(); j++)
                             {
                                 if (vertexIndices[i] == vertexSelection[j])
                                 {
-                                    match = true;
+                                    selected = true;
                                     break;
                                 }
                             }
                             
-                            if (!match)
+                            if (!selected)
                             {
-                                Vector2 coords = GetVertexCoords(vertexIndices[i].index, modelVertexWidth); // the coords of this vertex within the mesh
-                        
-                                std::vector<float> yValues; // y values of this vertex's neighbors
-                                
-                                if (coords.x != 0) // dont attempt x = -1
-                                {
-                                    int index = GetVertexIndices(coords.x - 1, coords.y, modelVertexWidth)[0];
-                                    
-                                    yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);   
-                                }
-                                else if (coords.x == 0 && (vertexIndices[i].coords.x > 0)) // if the vertex x coord is 0, check if there is another model to the left
-                                {
-                                    int index = GetVertexIndices(modelVertexWidth - 2, coords.y, modelVertexWidth)[0]; // get the index of the vertex in the other model
-                                    
-                                    yValues.push_back(models[vertexIndices[i].coords.x - 1][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);
-                                }
-                                
-                                if (coords.x != modelVertexWidth - 1) // dont attempt out of bounds x
-                                {
-                                    int index = GetVertexIndices(coords.x + 1, coords.y, modelVertexWidth)[0];
-                                    
-                                    yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);
-                                }
-                                else if (coords.x == modelVertexWidth - 1 && (vertexIndices[i].coords.x < canvasWidth - 1)) // if the vertex x coord is at max width, check if there is another model to the right
-                                {
-                                    int index = GetVertexIndices(1, coords.y, modelVertexWidth)[0]; // get the index of the vertex in the other model
-                                    
-                                    yValues.push_back(models[vertexIndices[i].coords.x + 1][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);                                   
-                                }
-                                
-                                if (coords.y != 0) // dont attempt y = -1
-                                {
-                                    int index = GetVertexIndices(coords.x, coords.y - 1, modelVertexWidth)[0];
-                                    
-                                    yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);    
-                                }
-                                else if (coords.y == 0 && (vertexIndices[i].coords.y > 0)) // if the vertex y coord is at the top, check if there is a model above
-                                {
-                                    int index = GetVertexIndices(coords.x, modelVertexHeight - 2, modelVertexWidth)[0]; // get the index of the vertex in the other model
-                                    
-                                    yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y - 1].meshes[0].vertices[index + 1]);
-                                }
-                                
-                                if (coords.y != modelVertexHeight - 1) // dont attempt out of bounds y
-                                {
-                                    int index = GetVertexIndices(coords.x, coords.y + 1, modelVertexWidth)[0];
-                                    
-                                    yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);
-                                }
-                                else if (coords.y == modelVertexHeight - 1 && (vertexIndices[i].coords.y < canvasHeight - 1)) // if the vertex y coord is at the bottom, check if there is a model below
-                                {
-                                    int index = GetVertexIndices(coords.x, 1, modelVertexWidth)[0]; // get the index of the vertex in the other model
-                                    
-                                    yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y + 1].meshes[0].vertices[index + 1]);
-                                }
-                                
-                                float average = 0;
-                                
-                                for (int i = 0; i < yValues.size(); i++)
-                                {
-                                    average += yValues[i];
-                                }
-                                
-                                average = average / (float)yValues.size();
-                                
-                                VertexState temp;
-                                temp.coords = vertexIndices[i].coords;
-                                temp.vertexIndex = vertexIndices[i].index;
-                                temp.y = average;
-                                
-                                changes.push_back(temp);
+                                vertices.push_back(vertexIndices[i]);
                             }
                         }
+                        
+                        Smooth(models, vertices, modelVertexWidth, modelVertexHeight, canvasWidth, canvasHeight);
                     }
                     else
                     {
-                        for (int i = 0; i < vertexIndices.size(); ++i)
-                        {
-                            Vector2 coords = GetVertexCoords(vertexIndices[i].index, modelVertexWidth);
-                            
-                            std::vector<float> yValues;
-                            
-                            if (coords.x != 0) // dont attempt x = -1
-                            {
-                                int index = GetVertexIndices(coords.x - 1, coords.y, modelVertexWidth)[0];
-                                
-                                yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);   
-                            }
-                            else if (coords.x == 0 && (vertexIndices[i].coords.x > 0)) // if the vertex x coord is 0, check if there is another model to the left
-                            {
-                                int index = GetVertexIndices(modelVertexWidth - 2, coords.y, modelVertexWidth)[0]; // get the index of the vertex in the other model
-                                
-                                yValues.push_back(models[vertexIndices[i].coords.x - 1][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);
-                            }
-                            
-                            if (coords.x != modelVertexWidth - 1) // dont attempt out of bounds x
-                            {
-                                int index = GetVertexIndices(coords.x + 1, coords.y, modelVertexWidth)[0];
-                                
-                                yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);
-                            }
-                            else if (coords.x == modelVertexWidth - 1 && (vertexIndices[i].coords.x < canvasWidth - 1)) // if the vertex x coord is at max width, check if there is another model to the right
-                            {
-                                int index = GetVertexIndices(1, coords.y, modelVertexWidth)[0]; // get the index of the vertex in the other model
-                                
-                                yValues.push_back(models[vertexIndices[i].coords.x + 1][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);                                   
-                            }
-                            
-                            if (coords.y != 0) // dont attempt y = -1
-                            {
-                                int index = GetVertexIndices(coords.x, coords.y - 1, modelVertexWidth)[0];
-                                
-                                yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);    
-                            }
-                            else if (coords.y == 0 && (vertexIndices[i].coords.y > 0)) // if the vertex y coord is at the top, check if there is a model above
-                            {
-                                int index = GetVertexIndices(coords.x, modelVertexHeight - 2, modelVertexWidth)[0]; // get the index of the vertex in the other model
-                                
-                                yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y - 1].meshes[0].vertices[index + 1]);
-                            }
-                            
-                            if (coords.y != modelVertexHeight - 1) // dont attempt out of bounds y
-                            {
-                                int index = GetVertexIndices(coords.x, coords.y + 1, modelVertexWidth)[0];
-                                
-                                yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[index + 1]);
-                            }
-                            else if (coords.y == modelVertexHeight - 1 && (vertexIndices[i].coords.y < canvasHeight - 1)) // if the vertex y coord is at the bottom, check if there is a model below
-                            {
-                                int index = GetVertexIndices(coords.x, 1, modelVertexWidth)[0]; // get the index of the vertex in the other model
-                                
-                                yValues.push_back(models[vertexIndices[i].coords.x][vertexIndices[i].coords.y + 1].meshes[0].vertices[index + 1]);
-                            }
-                            
-                            float average = 0;
-                            
-                            for (int i = 0; i < yValues.size(); i++)
-                            {
-                                average += yValues[i];
-                            }
-                            
-                            average = average / (float)yValues.size();
-                            
-                            VertexState temp;
-                            temp.coords = vertexIndices[i].coords;
-                            temp.vertexIndex = vertexIndices[i].index;
-                            temp.y = average;
-                            
-                            changes.push_back(temp);
-                        }
+                        Smooth(models, vertexIndices, modelVertexWidth, modelVertexHeight, canvasWidth, canvasHeight);
                     }  
-                    
-                    for (int i = 0; i < changes.size(); i++) // enact all changes 
-                    {
-                        models[changes[i].coords.x][changes[i].coords.y].meshes[0].vertices[changes[i].vertexIndex + 1] = changes[i].y;   
-                    }
 
                     for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
                     {
@@ -2253,6 +2196,84 @@ int main()
                 }
             
             }
+            else
+            {
+                Ray ray = GetMouseRay(GetMousePosition(), camera);
+                
+                if (IsKeyDown(KEY_G) && mousePressed && !models.empty()) // move model selection, centered on the model clicked on
+                {
+                    for (int i = 0; i < models.size(); i++) // test ray against all models
+                    {
+                        for (int j = 0; j < models[i].size(); j++)
+                        {
+                            hitPosition = GetCollisionRayModel2(ray, &models[i][j]); 
+                            
+                            if (hitPosition.hit) 
+                            {
+                                modelSelection.selection.clear();
+                                modelSelection.expandedSelection.clear();
+                                
+                                Vector2 topLeft; // the top left model of the new selection, start with i and j as coordinates
+                                topLeft.x = i;
+                                topLeft.y = j;
+                                
+                                if (modelSelection.width != 1) // if the width is 1, topLeft.x is already known
+                                {
+                                    if (!(modelSelection.width % 2)) // if the width is even, shift x by half with selection width - 1
+                                    {
+                                        topLeft.x -= (modelSelection.width / 2 - 1);
+                                    }
+                                    else // if the width is odd, shift x by half the selection width, remainder truncated
+                                    {
+                                        topLeft.x -= modelSelection.width / 2;
+                                    }
+                                }
+                                
+                                if (topLeft.x < 0) // if x was corrected past 0, set to 0
+                                    topLeft.x = 0;
+                                    
+                                if (modelSelection.height != 1) // if the height is 1, topLeft.y is already known
+                                {
+                                    if (!(modelSelection.height % 2)) // if the height is even, shift y by half with selection height - 1
+                                    {
+                                        topLeft.y -= (modelSelection.height / 2 - 1);
+                                    }
+                                    else // if the height is odd, shift x by half the selection height, remainder truncated
+                                    {
+                                        topLeft.y -= modelSelection.height / 2;
+                                    }
+                                }
+                                
+                                if (topLeft.y < 0) // if x was corrected past 0, set to 0
+                                    topLeft.y = 0;
+                                
+                                if (topLeft.x + modelSelection.width > canvasWidth) // make sure it wont extend out of bounds
+                                    topLeft.x = canvasWidth - modelSelection.width;
+                                
+                                if (topLeft.y + modelSelection.height > canvasHeight)
+                                    topLeft.y = canvasHeight - modelSelection.height;
+                                
+                                modelSelection.topLeft = topLeft;
+                                modelSelection.bottomRight = Vector2{topLeft.x + modelSelection.width - 1, topLeft.y + modelSelection.height - 1};
+                                
+                                for (int i2 = 0; i2 < modelSelection.width; i2++)
+                                {
+                                    for (int j2 = 0; j2 < modelSelection.height; j2++)
+                                    {
+                                        modelSelection.selection.push_back(Vector2{i2 + topLeft.x, j2 + topLeft.y});
+                                    }
+                                }
+                                
+                                SetExSelection(modelSelection, canvasWidth, canvasHeight);
+                                
+                                break;
+                            }
+                        }
+                        
+                        if (hitPosition.hit) break;
+                    }
+                }
+            }
             
             if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) 
             {
@@ -2335,7 +2356,7 @@ int main()
                 
                 for (int i = 0; i < history[stepIndex - 1].size(); i++) // reinstate the previous state of the mesh as recorded by the history at stepIndex - 1
                 {
-                    models[history[stepIndex - 1][i].coords.x][history[stepIndex - 1][i].coords.y].meshes[0].vertices[history[stepIndex - 1][i].vertexIndex + 1] = history[stepIndex - 1][i].y; 
+                    models[history[stepIndex - 1][i].coords.x][history[stepIndex - 1][i].coords.y].meshes[0].vertices[history[stepIndex - 1][i].index + 1] = history[stepIndex - 1][i].y; 
                 }
                 
                 if (stepIndex > 0) 
@@ -2357,7 +2378,7 @@ int main()
             {
                 for (int i = 0; i < history[stepIndex + 1].size(); i++)
                 {
-                    models[history[stepIndex + 1][i].coords.x][history[stepIndex + 1][i].coords.y].meshes[0].vertices[history[stepIndex + 1][i].vertexIndex + 1] = history[stepIndex + 1][i].y;
+                    models[history[stepIndex + 1][i].coords.x][history[stepIndex + 1][i].coords.y].meshes[0].vertices[history[stepIndex + 1][i].index + 1] = history[stepIndex + 1][i].y;
                 }           
 
                 stepIndex++;
@@ -2383,6 +2404,32 @@ int main()
             if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_D) && !vertexSelection.empty()) // deselect
             {
                 vertexSelection.clear();
+            }
+            
+            if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_T)) // hotkey for updating the texture
+            {
+                float maxY = models[0][0].meshes[0].vertices[1]; // start with the first y value;
+                float minY = models[0][0].meshes[0].vertices[1];
+                
+                for (int i = 0; i < models.size(); i++)
+                {
+                    for (int j = 0; j < models[i].size(); j++)
+                    {
+                        for (int k = 0; k < (models[i][j].meshes[0].vertexCount * 3) - 2; k += 3) // check this models vertices
+                        {
+                            if (models[i][j].meshes[0].vertices[k + 1] > maxY)
+                                maxY = models[i][j].meshes[0].vertices[k + 1];
+                            
+                            if (models[i][j].meshes[0].vertices[k + 1] < minY)
+                                minY = models[i][j].meshes[0].vertices[k + 1];
+                        }
+                    }
+                }
+                
+                highestY = maxY;
+                lowestY = minY;
+                
+                UpdateHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY); 
             }
             
             switch (inputFocus)
@@ -2699,7 +2746,7 @@ int main()
                 
                 BeginMode3D(camera);
                 
-                    if (!models.empty())
+                    if (!models.empty()) // draw models
                     {
                         for (int i = 0; i < models.size(); i++)
                         {
@@ -2726,7 +2773,7 @@ int main()
                     
                     DrawGrid(100, 1.0f);
                     
-                    if (hitPosition.hit)
+                    if (hitPosition.hit) // draw brush influence cylinder
                     {
                         if (brush == BrushTool::SELECT)
                         {
@@ -2783,14 +2830,14 @@ int main()
                         
                         for (size_t i = 0; i < vertexSelection.size(); i += increment)
                         {
-                            Vector3 v = {models[vertexSelection[i].coords.x][vertexSelection[i].coords.y].meshes[0].vertices[vertexSelection[i].vertexIndex], models[vertexSelection[i].coords.x][vertexSelection[i].coords.y].meshes[0].vertices[vertexSelection[i].vertexIndex + 1], models[vertexSelection[i].coords.x][vertexSelection[i].coords.y].meshes[0].vertices[vertexSelection[i].vertexIndex + 2]};
+                            Vector3 v = {models[vertexSelection[i].coords.x][vertexSelection[i].coords.y].meshes[0].vertices[vertexSelection[i].index], models[vertexSelection[i].coords.x][vertexSelection[i].coords.y].meshes[0].vertices[vertexSelection[i].index + 1], models[vertexSelection[i].coords.x][vertexSelection[i].coords.y].meshes[0].vertices[vertexSelection[i].index + 2]};
                             
                             DrawCube(v, 0.03f, 0.03f, 0.03f, vertexColor);
                         }
                     }
                     
                 EndMode3D();
-                
+                if (debug) DrawText("@@@@@@@@@@", 200, 10, 15, BLACK);
                 /* debug text
                 float temp = canvasHeight;//history.size();
                 float temp2 = canvasWidth;//stepIndex;
@@ -2893,7 +2940,9 @@ int main()
                         DrawText("Camera", 4, 72, 11, BLACK);
                         DrawText("Drag & Drop", 15, 92, 11, BLACK);
                         
-                        DrawText("Camera Sensitivity:", 5, 110, 11, BLACK);
+                        //DrawRectangleRec(cameraTypeBox, WHITE);
+                        
+                        //DrawText("Camera Sensitivity:", 5, 110, 11, BLACK);
                         
                         if (!characterDrag) // dont draw the circle in the rectangle if it's being dragged
                             DrawCircle(characterButton.x + (characterButton.width / 2 + 1), characterButton.y + (characterButton.height / 2 + 1), characterButton.width / 2 - 4, ORANGE);
@@ -3071,6 +3120,14 @@ int main()
                             PrintBoxInfo(stampRotationBox, inputFocus, InputFocus::STAMP_ROTATION, stampRotationString, stampRotationAngle);
                             PrintBoxInfo(stampSlopeBox, inputFocus, InputFocus::STAMP_SLOPE, stampSlopeString, stampSlope);
                             PrintBoxInfo(stampOffsetBox, inputFocus, InputFocus::STAMP_OFFSET, stampOffsetString, stampOffset);
+                        }
+                        
+                        if (brush == BrushTool::SMOOTH)
+                        {
+                            DrawRectangleRec(smoothMeshesButton, GRAY);
+                            
+                            DrawTextRec(GetFontDefault(), "Smooth Mesh", Rectangle {smoothMeshesButton.x + 3, smoothMeshesButton.y + 3, smoothMeshesButton.width - 2, smoothMeshesButton.height - 2}, 13, 0.5f, false, BLACK);
+                            DrawTextRec(GetFontDefault(), "Selection", Rectangle {smoothMeshesButton.x + 3, smoothMeshesButton.y + 14, smoothMeshesButton.width - 2, smoothMeshesButton.height - 2}, 13, 0.5f, false, BLACK);
                         }
                         
                         DrawLine(6, 180, 95, 180, BLACK);
@@ -3272,12 +3329,14 @@ int main()
 // mesh interpolation
 // stamp setting: change max height and tool radius proportionally over distance dragged
 // setting that checks mouse hit position distances between frames and interpolates between them by queueing actions  
-// set brush collision to current mesh selection, saving a copy of the meshes to test against
 // precise export image size
 // shading based on angle
 // smooth tool angle clamp
 // slope finder: find the slope between two points
 // camera lock onto hitposition at certain angle and distance
+// height cap according to adjustable plane / mesh
+// smooth selection
+// make it so pressing x doesnt overlap with shift or ctrl x
 
 // -crash after ~141 history steps (if 3x3+ mesh?)
 // -loading 2x3 image 'test' twice in a row crashes
@@ -3333,7 +3392,7 @@ void HistoryUpdate(std::vector<std::vector<VertexState>>& history, const std::ve
         for (int j = 0; j < (models[modelCoords[i].x][modelCoords[i].y].meshes[0].vertexCount * 3) - 2; j += 3) // save each vertex's data
         {
            VertexState temp;
-           temp.vertexIndex = j;
+           temp.index = j;
            temp.coords = Vector2{modelCoords[i].x, modelCoords[i].y};
            temp.y = models[modelCoords[i].x][modelCoords[i].y].meshes[0].vertices[j+1];
            
@@ -3950,22 +4009,6 @@ void UpdateCharacterCamera(Camera* camera, const std::vector<std::vector<Model>>
                            sinf(cameraAngle.x)*direction[MOVE_LEFT] -
                            sinf(cameraAngle.x)*direction[MOVE_RIGHT])/PLAYER_MOVEMENT_SENSITIVITY;
     
-    /* free fly camera
-    camera->position.x += (sinf(cameraAngle.x)*cosf(cameraAngle.y)*direction[MOVE_BACK] -
-                           sinf(cameraAngle.x)*cosf(cameraAngle.y)*direction[MOVE_FRONT] -
-                           cosf(cameraAngle.x)*cosf(cameraAngle.y)*direction[MOVE_LEFT] +
-                           cosf(cameraAngle.x)*cosf(cameraAngle.y)*direction[MOVE_RIGHT])/PLAYER_MOVEMENT_SENSITIVITY;
-                           
-    camera->position.y += (sinf(cameraAngle.y)*direction[MOVE_FRONT] -
-                           sinf(cameraAngle.y)*direction[MOVE_BACK] +
-                           1.0f*direction[MOVE_UP] - 1.0f*direction[MOVE_DOWN])/PLAYER_MOVEMENT_SENSITIVITY;
-                           
-    camera->position.z += (cosf(cameraAngle.x)*cosf(cameraAngle.y)*direction[MOVE_BACK] -
-                           cosf(cameraAngle.x)*cosf(cameraAngle.y)*direction[MOVE_FRONT] +
-                           sinf(cameraAngle.x)*cosf(cameraAngle.y)*direction[MOVE_LEFT] -
-                           sinf(cameraAngle.x)*cosf(cameraAngle.y)*direction[MOVE_RIGHT])/PLAYER_MOVEMENT_SENSITIVITY;
-    */
-    
     // keep the camera at ground level by finding the distance to the ground
     Ray ray = {Vector3{newCameraPositionX, camera->position.y + 10, newCameraPositionZ}, Vector3{0, -1, 0}};
     RayHitInfo hitPosition;
@@ -4008,7 +4051,7 @@ void UpdateCharacterCamera(Camera* camera, const std::vector<std::vector<Model>>
 }
 
 
-void UpdateFreeCamera(Camera* camera)
+void UpdatePerspectiveCamera(Camera* camera)
 {
     static Vector2 previousMousePosition = { 0.0f, 0.0f };
     
@@ -4057,6 +4100,28 @@ void UpdateFreeCamera(Camera* camera)
     camera->target.x = camera->position.x - sinf(cameraAngle.x)*cosf(cameraAngle.y)*CAMERA_FIRST_PERSON_FOCUS_DISTANCE;
     camera->target.y = camera->position.y + sinf(cameraAngle.y)*CAMERA_FIRST_PERSON_FOCUS_DISTANCE;
     camera->target.z = camera->position.z - cosf(cameraAngle.x)*cosf(cameraAngle.y)*CAMERA_FIRST_PERSON_FOCUS_DISTANCE;
+}
+
+
+void UpdateOrthographicCamera(Camera* camera)
+{
+    bool direction[6] = { IsKeyDown(cameraMoveControl[MOVE_FRONT]),
+                           IsKeyDown(cameraMoveControl[MOVE_BACK]),
+                           IsKeyDown(cameraMoveControl[MOVE_RIGHT]),
+                           IsKeyDown(cameraMoveControl[MOVE_LEFT]),
+                           IsKeyDown(cameraMoveControl[MOVE_UP]),
+                           IsKeyDown(cameraMoveControl[MOVE_DOWN]) };
+    
+    // free fly camera
+    camera->position.x += direction[MOVE_RIGHT] - direction[MOVE_LEFT];
+                           
+    camera->position.y += direction[MOVE_UP] - direction[MOVE_DOWN];
+                           
+    camera->position.z += direction[MOVE_BACK] - direction[MOVE_FRONT];
+    
+    camera->target.x = camera->position.x;
+    camera->target.y = camera->position.y - 0.1;
+    camera->target.z = camera->position.z;
 }
 
 
@@ -4165,9 +4230,9 @@ void ProcessInput(int key, std::string& s, float& input, InputFocus& inputFocus,
 }
 
 
-std::vector<ModelVertex> FindVertexSelection(const std::vector<std::vector<Model>>& models, const ModelSelection& modelSelection, const RayHitInfo hitPosition, float selectRadius)
+std::vector<VertexState> FindVertexSelection(const std::vector<std::vector<Model>>& models, const ModelSelection& modelSelection, const RayHitInfo hitPosition, float selectRadius)
 {
-    std::vector<ModelVertex>vertexIndices; // vector to return
+    std::vector<VertexState>vertexIndices; // vector to return
     
     if (hitPosition.hit)
     {
@@ -4183,12 +4248,12 @@ std::vector<ModelVertex> FindVertexSelection(const std::vector<std::vector<Model
                 
                 if (result <= selectRadius) // if this vertex is inside the radius
                 {
-                    ModelVertex mv;
-                    mv.coords.x = modelSelection.expandedSelection[i].x;
-                    mv.coords.y = modelSelection.expandedSelection[i].y;
-                    mv.index = j; 
+                    VertexState vs;
+                    vs.coords.x = modelSelection.expandedSelection[i].x;
+                    vs.coords.y = modelSelection.expandedSelection[i].y;
+                    vs.index = j; 
                     
-                    vertexIndices.push_back(mv); // store the vertex's index in the mesh and its models coords
+                    vertexIndices.push_back(vs); // store the vertex's index in the mesh and its models coords
                 }
             }                   
         }
@@ -4302,24 +4367,6 @@ float PointSegmentDistance(Vector2 point, Vector2 segmentPoint1, Vector2 segment
 }
 
 
-bool IsEqualF(float a, float b)
-{
-    if (fabs(a - b) < 0.0001) 
-        return true;
-    else 
-        return false;
-}
-
-
-bool operator== (const ModelVertex &mv1, const ModelVertex &mv2)
-{
-    if (mv1.coords.x == mv2.coords.x && mv1.coords.y == mv2.coords.y && mv1.index == mv2.index)
-        return true;
-    else
-        return false;
-}
-
-
 Mesh CopyMesh(const Mesh& mesh)
 {
     // (doesnt copy animation data)
@@ -4355,15 +4402,97 @@ Mesh CopyMesh(const Mesh& mesh)
 }
 
 
-bool operator!= (const ModelVertex &mv1, const ModelVertex &mv2)
+void Smooth(std::vector<std::vector<Model>>& models, const std::vector<VertexState>& vertices, int modelVertexWidth, int modelVertexHeight, int canvasWidth, int canvasHeight)
 {
-    return !(mv1 == mv2);
+    std::vector<VertexState> changes; //  calculate and then make changes all at once rather than one at a time
+    
+    for (int i = 0; i < vertices.size(); ++i)
+    {
+        Vector2 coords = GetVertexCoords(vertices[i].index, modelVertexWidth);
+        
+        std::vector<float> yValues;
+        
+        if (coords.x != 0) // dont attempt x = -1
+        {
+            int index = GetVertexIndices(coords.x - 1, coords.y, modelVertexWidth)[0];
+            
+            yValues.push_back(models[vertices[i].coords.x][vertices[i].coords.y].meshes[0].vertices[index + 1]);   
+        }
+        else if (coords.x == 0 && (vertices[i].coords.x > 0)) // if the vertex x coord is 0, check if there is another model to the left
+        {
+            int index = GetVertexIndices(modelVertexWidth - 2, coords.y, modelVertexWidth)[0]; // get the index of the vertex in the other model
+            
+            yValues.push_back(models[vertices[i].coords.x - 1][vertices[i].coords.y].meshes[0].vertices[index + 1]);
+        }
+        
+        if (coords.x != modelVertexWidth - 1) // dont attempt out of bounds x
+        {
+            int index = GetVertexIndices(coords.x + 1, coords.y, modelVertexWidth)[0];
+            
+            yValues.push_back(models[vertices[i].coords.x][vertices[i].coords.y].meshes[0].vertices[index + 1]);
+        }
+        else if (coords.x == modelVertexWidth - 1 && (vertices[i].coords.x < canvasWidth - 1)) // if the vertex x coord is at max width, check if there is another model to the right
+        {
+            int index = GetVertexIndices(1, coords.y, modelVertexWidth)[0]; // get the index of the vertex in the other model
+            
+            yValues.push_back(models[vertices[i].coords.x + 1][vertices[i].coords.y].meshes[0].vertices[index + 1]);                                   
+        }
+        
+        if (coords.y != 0) // dont attempt y = -1
+        {
+            int index = GetVertexIndices(coords.x, coords.y - 1, modelVertexWidth)[0];
+            
+            yValues.push_back(models[vertices[i].coords.x][vertices[i].coords.y].meshes[0].vertices[index + 1]);    
+        }
+        else if (coords.y == 0 && (vertices[i].coords.y > 0)) // if the vertex y coord is at the top, check if there is a model above
+        {
+            int index = GetVertexIndices(coords.x, modelVertexHeight - 2, modelVertexWidth)[0]; // get the index of the vertex in the other model
+            
+            yValues.push_back(models[vertices[i].coords.x][vertices[i].coords.y - 1].meshes[0].vertices[index + 1]);
+        }
+        
+        if (coords.y != modelVertexHeight - 1) // dont attempt out of bounds y
+        {
+            int index = GetVertexIndices(coords.x, coords.y + 1, modelVertexWidth)[0];
+            
+            yValues.push_back(models[vertices[i].coords.x][vertices[i].coords.y].meshes[0].vertices[index + 1]);
+        }
+        else if (coords.y == modelVertexHeight - 1 && (vertices[i].coords.y < canvasHeight - 1)) // if the vertex y coord is at the bottom, check if there is a model below
+        {
+            int index = GetVertexIndices(coords.x, 1, modelVertexWidth)[0]; // get the index of the vertex in the other model
+            
+            yValues.push_back(models[vertices[i].coords.x][vertices[i].coords.y + 1].meshes[0].vertices[index + 1]);
+        }
+        
+        float average = 0;
+        
+        for (int i = 0; i < yValues.size(); i++)
+        {
+            average += yValues[i];
+        }
+        
+        average = average / (float)yValues.size();
+        
+        VertexState temp;
+        temp.coords = vertices[i].coords;
+        temp.index = vertices[i].index;
+        temp.y = average;
+        
+        changes.push_back(temp);
+    }
+
+    for (int i = 0; i < changes.size(); i++) // enact all changes 
+    {
+        models[changes[i].coords.x][changes[i].coords.y].meshes[0].vertices[changes[i].index + 1] = changes[i].y;   
+    }
+    
+    return;
 }
 
 
 bool operator== (const VertexState &vs1, const VertexState &vs2)
 {
-    if (vs1.coords.x == vs2.coords.x && vs1.coords.y == vs2.coords.y && vs1.vertexIndex == vs2.vertexIndex)
+    if (vs1.coords.x == vs2.coords.x && vs1.coords.y == vs2.coords.y && vs1.index == vs2.index)
         return true;
     else
         return false;
@@ -4376,31 +4505,6 @@ bool operator!= (const VertexState &vs1, const VertexState &vs2)
 }
 
 
-bool operator== (const VertexState &vs, const ModelVertex &mv)
-{
-    if (vs.coords.x == mv.coords.x && vs.coords.y == mv.coords.y && vs.vertexIndex == mv.index)
-        return true;
-    else
-        return false;
-}
-
-
-bool operator== (const ModelVertex &mv, const VertexState &vs)
-{
-    return (vs == mv);
-}
-
-
-bool operator!= (const VertexState &vs, const ModelVertex &mv)
-{
-    return !(vs == mv);
-}
-
-
-bool operator!= (const ModelVertex &mv, const VertexState &vs)
-{
-    return !(vs == mv);
-}
 
 
 
