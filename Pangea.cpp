@@ -6,6 +6,7 @@
 #include <cstring>
 #include "raymath.h"
 #include "float.h"
+#include <bitset>
 
 
 
@@ -23,7 +24,7 @@ enum class BrushTool
 enum class Panel
 {
     NONE,
-    HEIGHTMAP,
+    HEIGHTMAP, // AKA CANVAS
     CAMERA,
     TOOLS
 };
@@ -93,7 +94,7 @@ Color* GenHeightmapSelection(const std::vector<std::vector<Model>>& models, cons
 
 Color* GenHeightmap(const Model& model, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY, bool grayscale); // memory should be freed. generates a heightmap for a single model. used for the model texture, cuts last row and column so pixels and polys are 1:1. will update global highest and lowest Y
 
-Color* GenHeightmap(const std::vector<std::vector<Model>>& models, int modelVertexWidth, int modelVertexHeight, float maxHeight, float minHeight); // memory should be freed. generates a heightmap from the whole map. used for export
+Color* GenHeightmap(const std::vector<std::vector<Model>>& models, int modelVertexWidth, int modelVertexHeight, float maxHeight, float minHeight, bool grayscale); // memory should be freed. generates a heightmap from the whole map. used for export
 
 RayHitInfo GetCollisionRayModel2(Ray ray, const Model *model); // having a copy of GetCollisionRayModel increases performance for some reason
 
@@ -134,6 +135,10 @@ float PointSegmentDistance(Vector2 point, Vector2 segmentPoint1, Vector2 segment
 Mesh CopyMesh(const Mesh& mesh); // do a deep copy of a mesh
 
 void Smooth(std::vector<std::vector<Model>>& models, const std::vector<VertexState>& vertices, int modelVertexWidth, int modelVertexHeight, int canvasWidth, int canvasHeight); // do a smooth operation on the vertices
+
+unsigned long PixelToHeight(Color pixel); // takes the bits from each of the 4 png channels and arranges them into one int
+
+Mesh GenMeshHeightmap32bit(Image heightmap, Vector3 size); // version of GenMeshHeightmap that handles split channel heightmaps
 
 
 
@@ -198,6 +203,8 @@ int main()
     bool stampStretch = false; // if true, the stamp will become two connected copies of itself equally spaced from the middle that rotate depending on mouse drag movement
     bool useGhostMesh = false; // when set to true, a copy of the model selection is made which is then tested against for ray collision rather than the current mesh. setting to false clears the mesh
     bool stampDrag = false; // set to true after the first stamp edit with stampStretch on, and off when the left mouse is released
+    bool saveGrayscale = true; // true to save the heightmap as grayscale, false to save using all png channels (looks weird, saves more height resolution)
+    bool loadGrayscale = true; // should be set to true when loading grayscale image
     
     std::vector<std::vector<VertexState>> history;
     std::vector<VertexState> vertexSelection;
@@ -246,18 +253,22 @@ int main()
     Rectangle panel3 = {0, 66, 101, 637};
     
     // SAVE WINDOW
-    Rectangle saveWindow = {saveWindowAnchor.x, saveWindowAnchor.y, 300, 185};
+    Rectangle saveWindow = {saveWindowAnchor.x, saveWindowAnchor.y, 300, 235};
     Rectangle saveWindowSaveButton = {saveWindowAnchor.x + 60, saveWindowAnchor.y + 155, 60, 20};
     Rectangle saveWindowCancelButton = {saveWindowAnchor.x + 180, saveWindowAnchor.y + 155, 60, 20};
     Rectangle saveWindowTextBox = {saveWindowAnchor.x + 30, saveWindowAnchor.y + 40, 240, 30};
     Rectangle saveWindowHeightBox = {saveWindowAnchor.x + 30, saveWindowAnchor.y + 115, 240, 30};
+    Rectangle saveWindowGrayscale = {saveWindowAnchor.x + 15, saveWindowAnchor.y + 185, 12, 12};
+    Rectangle saveWindow32bit = {saveWindowAnchor.x + 15, saveWindowAnchor.y + 210, 12, 12};
     
     // LOAD WINDOW
-    Rectangle loadWindow = {loadWindowAnchor.x, loadWindowAnchor.y, 300, 185};
+    Rectangle loadWindow = {loadWindowAnchor.x, loadWindowAnchor.y, 300, 235};
     Rectangle loadWindowLoadButton = {loadWindowAnchor.x + 60, loadWindowAnchor.y + 155, 60, 20};
     Rectangle loadWindowCancelButton = {loadWindowAnchor.x + 180, loadWindowAnchor.y + 155, 60, 20};
     Rectangle loadWindowTextBox = {loadWindowAnchor.x + 30, loadWindowAnchor.y + 40, 240, 30};
     Rectangle loadWindowHeightBox = {loadWindowAnchor.x + 30, loadWindowAnchor.y + 115, 240, 30};
+    Rectangle loadWindowGrayscale = {loadWindowAnchor.x + 15, loadWindowAnchor.y + 185, 12, 12};
+    Rectangle loadWindow32bit = {loadWindowAnchor.x + 15, loadWindowAnchor.y + 210, 12, 12};
     
     // DIRECTORY WINDOW
     Rectangle dirWindow = {dirWindowAnchor.x, dirWindowAnchor.y, 500, 120};
@@ -265,7 +276,7 @@ int main()
     Rectangle dirWindowCancelButton = {dirWindowAnchor.x + 280, dirWindowAnchor.y + 85, 60, 20};
     Rectangle dirWindowTextBox = {dirWindowAnchor.x + 30, dirWindowAnchor.y + 40, 440, 30};
     
-    // MESH PANEL
+    // CANVAS PANEL
     Rectangle exportButton = {10, 557, 80, 40};
     Rectangle meshGenButton = {10, 80, 80, 40};
     Rectangle xMeshBox = {35, 30, 55, 20};
@@ -335,7 +346,7 @@ int main()
     ChangeDirectory("C:/Users/msgs4/Desktop/Pangea");
     
     SetTargetFPS(60);
-    bool debug = 0;
+    
     while (!WindowShouldClose())
     {
         if (characterMode)
@@ -422,13 +433,13 @@ int main()
                     
                     if (saveHeightString.empty())
                     {
-                        pixels = GenHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY);
+                        pixels = GenHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY, saveGrayscale);
                     }
                     else
                     {
                         float maxHeight = std::stof(saveHeightString);
                         
-                        pixels = GenHeightmap(models, modelVertexWidth, modelVertexHeight, maxHeight, lowestY);
+                        pixels = GenHeightmap(models, modelVertexWidth, modelVertexHeight, maxHeight, lowestY, saveGrayscale);
                     }
                     
                     Image image = LoadImageEx(pixels, canvasWidth * modelVertexWidth - (canvasWidth - 1), canvasHeight * modelVertexHeight - (canvasHeight - 1));
@@ -448,6 +459,14 @@ int main()
                     saveHeightString.clear();
                     inputFocus = InputFocus::NONE;
                     showSaveWindow = false;
+                }
+                else if (CheckCollisionPointRec(mousePosition, saveWindowGrayscale) && mousePressed)
+                {
+                    saveGrayscale = true;
+                }
+                else if (CheckCollisionPointRec(mousePosition, saveWindow32bit) && mousePressed)
+                {
+                    saveGrayscale = false;
                 }
             }
             else if (showLoadWindow)
@@ -523,7 +542,13 @@ int main()
                             
                             Image tempImage = LoadImageEx(vertexPixels, modelVertexWidth, modelVertexHeight);
                             //Mesh mesh = GenMeshHeightmap(tempImage, (Vector3){ modelWidth, heightRef, modelHeight });    // Generate heightmap mesh (RAM and VRAM)
-                            Model model = LoadModelFromMesh(GenMeshHeightmap(tempImage, (Vector3){ modelWidth, heightRef, modelHeight }));  
+                            Model model;
+                            
+                            if (loadGrayscale)
+                                model = LoadModelFromMesh(GenMeshHeightmap(tempImage, (Vector3){ modelWidth, heightRef, modelHeight }));  
+                            else
+                                model = LoadModelFromMesh(GenMeshHeightmap32bit(tempImage, (Vector3){ modelWidth, heightRef, modelHeight })); 
+                            
                             UnloadImage(tempImage);
                             RL_FREE(vertexPixels);
                             
@@ -585,7 +610,14 @@ int main()
                     inputFocus = InputFocus::NONE;
                     showLoadWindow = false;
                 }
-                
+                else if (CheckCollisionPointRec(mousePosition, loadWindowGrayscale) && mousePressed)
+                {
+                    loadGrayscale = true;
+                }
+                else if (CheckCollisionPointRec(mousePosition, loadWindow32bit) && mousePressed)
+                {
+                    loadGrayscale = false;
+                }
             }// check if the mouse is over a 2d element
             else if (showDirWindow)
             {
@@ -724,6 +756,14 @@ int main()
                                 }
                                 else if (xDifference < 0)
                                 {
+                                    for (int i = models.size() + xDifference; i < models.size(); i++) // unload models from memory
+                                    {
+                                        for (int j = 0; j < models[i].size(); j++)
+                                        {
+                                            UnloadModel(models[i][j]);
+                                        }
+                                    }
+                                    
                                     models.erase(models.begin() + (models.size() + xDifference), models.end());
                                     
                                     history.clear(); // clear history if the canvas is shrunk so that undo operations dont go out of bounds
@@ -748,6 +788,11 @@ int main()
                                     {
                                         if (models[i].size() > newLength) // z will need to be cut in existing columns, but may have to be expanded in new ones
                                         {
+                                            for (int j = models[i].size() - newLength; j < models[i].size(); j++) // unload models from memory
+                                            {
+                                                UnloadModel(models[i][j]);
+                                            }
+                                            
                                             models[i].erase(models[i].begin() + newLength, models[i].end());
                                         }
                                         else
@@ -1933,7 +1978,7 @@ int main()
                         float angle = 90 - fabs(stampSlope); // right triangle with 90 degrees and stampSlope on top, angle is on bottom
                         float heightDifference = distance/sinf(angle*DEG2RAD)*sinf(fabs(stampSlope)*DEG2RAD);
                         
-                        float ratio = sinf((90 - stampAngle)*DEG2RAD) / sinf(stampAngle*DEG2RAD); // rise to run ratio, used to detemine how much height difference translates into select radius difference
+                        float ratio = sinf((90 - stampAngle)*DEG2RAD) / sinf(stampAngle*DEG2RAD); // rise to run ratio, used to determine how much height difference translates into select radius difference
                         
                         if (stampSlope > 0)
                             selectRadius = selectRadius + ratio * heightDifference;
@@ -2837,7 +2882,7 @@ int main()
                     }
                     
                 EndMode3D();
-                if (debug) DrawText("@@@@@@@@@@", 200, 10, 15, BLACK);
+                
                 /* debug text
                 float temp = canvasHeight;//history.size();
                 float temp2 = canvasWidth;//stepIndex;
@@ -2864,7 +2909,7 @@ int main()
                     case Panel::NONE:
                     {
                         DrawRectangleRec(heightmapTab, GRAY);
-                        DrawTextRec(GetFontDefault(), "Heightmap", Rectangle {heightmapTab.x + 3, heightmapTab.y + 3, heightmapTab.width - 2, heightmapTab.height - 2}, 15, 1.f, false, BLACK);
+                        DrawTextRec(GetFontDefault(), "Canvas", Rectangle {heightmapTab.x + 3, heightmapTab.y + 3, heightmapTab.width - 2, heightmapTab.height - 2}, 15, 1.f, false, BLACK);
                         
                         DrawRectangleRec(panel1, panelColor);
                         
@@ -2881,7 +2926,7 @@ int main()
                     case Panel::HEIGHTMAP:
                     {
                         DrawRectangleRec(heightmapTab, GRAY);
-                        DrawTextRec(GetFontDefault(), "Heightmap", Rectangle {heightmapTab.x + 3, heightmapTab.y + 3, heightmapTab.width - 2, heightmapTab.height - 2}, 15, 1.f, false, BLACK);
+                        DrawTextRec(GetFontDefault(), "Canvas", Rectangle {heightmapTab.x + 3, heightmapTab.y + 3, heightmapTab.width - 2, heightmapTab.height - 2}, 15, 1.f, false, BLACK);
                         
                         DrawRectangleRec(panel1, panelColor);
                         
@@ -2923,7 +2968,7 @@ int main()
                     case Panel::CAMERA:
                     {
                         DrawRectangleRec(heightmapTab, GRAY);
-                        DrawTextRec(GetFontDefault(), "Heightmap", Rectangle {heightmapTab.x + 3, heightmapTab.y + 3, heightmapTab.width - 2, heightmapTab.height - 2}, 15, 1.f, false, BLACK);
+                        DrawTextRec(GetFontDefault(), "Canvas", Rectangle {heightmapTab.x + 3, heightmapTab.y + 3, heightmapTab.width - 2, heightmapTab.height - 2}, 15, 1.f, false, BLACK);
                         
                         DrawRectangleRec(panel1, panelColor);
                         
@@ -2952,7 +2997,7 @@ int main()
                     case Panel::TOOLS:
                     {
                         DrawRectangleRec(heightmapTab, GRAY);
-                        DrawTextRec(GetFontDefault(), "Heightmap", Rectangle {heightmapTab.x + 3, heightmapTab.y + 3, heightmapTab.width - 2, heightmapTab.height - 2}, 15, 1.f, false, BLACK);
+                        DrawTextRec(GetFontDefault(), "Canvas", Rectangle {heightmapTab.x + 3, heightmapTab.y + 3, heightmapTab.width - 2, heightmapTab.height - 2}, 15, 1.f, false, BLACK);
                         
                         DrawRectangleRec(panel1, panelColor);
                         
@@ -3204,12 +3249,21 @@ int main()
                     DrawRectangleRec(saveWindowCancelButton, GRAY);
                     DrawRectangleRec(saveWindowTextBox, WHITE);
                     DrawRectangleRec(saveWindowHeightBox, WHITE);
+                    DrawRectangleRec(saveWindowGrayscale, WHITE);
+                    DrawRectangleRec(saveWindow32bit, WHITE);
                     
                     DrawTextRec(GetFontDefault(), "Save", Rectangle {saveWindowSaveButton.x + 3, saveWindowSaveButton.y + 3, saveWindowSaveButton.width - 2, saveWindowSaveButton.height - 2}, 15, 0.5f, false, BLACK);
                     DrawTextRec(GetFontDefault(), "Cancel", Rectangle {saveWindowCancelButton.x + 3, saveWindowCancelButton.y + 3, saveWindowCancelButton.width - 2, saveWindowCancelButton.height - 2}, 15, 0.5f, false, BLACK);
                     DrawText("Save heightmap as .png:", saveWindowAnchor.x + 6, saveWindowAnchor.y + 12, 17, BLACK);
                     DrawText("Reference height (for scale):", saveWindowAnchor.x + 6, saveWindowAnchor.y + 87, 17, BLACK);
-                   
+                    DrawText("Save as grayscale (8 bits)", saveWindowGrayscale.x + 16, saveWindowGrayscale.y - 1, 15, BLACK);
+                    DrawText("Save using 4 channels (32 bits)", saveWindow32bit.x + 16, saveWindow32bit.y - 1, 15, BLACK);
+                    
+                    if (saveGrayscale)
+                        DrawText("+", saveWindowGrayscale.x + 1, saveWindowGrayscale.y - 3, 20, BLACK);
+                    else
+                        DrawText("+", saveWindow32bit.x + 1, saveWindow32bit.y - 3, 20, BLACK);
+                    
                     char text[saveMeshString.size() + 1];
                     strcpy(text, saveMeshString.c_str());  
                     DrawTextRec(GetFontDefault(), text, Rectangle {saveWindowTextBox.x + 3, saveWindowTextBox.y + 3, saveWindowTextBox.width - 2, saveWindowTextBox.height - 2}, 15, 0.5f, false, BLACK);
@@ -3244,11 +3298,20 @@ int main()
                     DrawRectangleRec(loadWindowCancelButton, GRAY);
                     DrawRectangleRec(loadWindowTextBox, WHITE);
                     DrawRectangleRec(loadWindowHeightBox, WHITE);
+                    DrawRectangleRec(loadWindowGrayscale, WHITE);
+                    DrawRectangleRec(loadWindow32bit, WHITE);
                     
                     DrawTextRec(GetFontDefault(), "Load", Rectangle {loadWindowLoadButton.x + 3, loadWindowLoadButton.y + 3, loadWindowLoadButton.width - 2, loadWindowLoadButton.height - 2}, 15, 0.5f, false, BLACK);
                     DrawTextRec(GetFontDefault(), "Cancel", Rectangle {loadWindowCancelButton.x + 3, loadWindowCancelButton.y + 3, loadWindowCancelButton.width - 2, loadWindowCancelButton.height - 2}, 15, 0.5f, false, BLACK);
                     DrawText("Load heightmap (png):", loadWindowAnchor.x + 6, loadWindowAnchor.y + 12, 17, BLACK);
                     DrawText("Pure white height value (for scale):", loadWindowAnchor.x + 6, loadWindowAnchor.y + 87, 17, BLACK);
+                    DrawText("Image is grayscale", saveWindowGrayscale.x + 16, saveWindowGrayscale.y - 1, 15, BLACK);
+                    DrawText("Image is split png", saveWindow32bit.x + 16, saveWindow32bit.y - 1, 15, BLACK);
+                    
+                    if (loadGrayscale)
+                        DrawText("+", loadWindowGrayscale.x + 1, loadWindowGrayscale.y - 3, 20, BLACK);
+                    else
+                        DrawText("+", loadWindow32bit.x + 1, loadWindow32bit.y - 3, 20, BLACK);
                     
                     char text[loadMeshString.size() + 1];
                     strcpy(text, loadMeshString.c_str());  
@@ -3303,7 +3366,6 @@ int main()
 }
 
 
-// upside down cone brush
 // selection by angle / normal
 // mesh streaming
 // incorporate delta time, GetFrameTime
@@ -3327,7 +3389,6 @@ int main()
 // make input boxes save current value, empty it to make room for input, but return the saved value if nothing changed. also make unfocusing = enter
 // dynamic history capacity
 // mesh interpolation
-// stamp setting: change max height and tool radius proportionally over distance dragged
 // setting that checks mouse hit position distances between frames and interpolates between them by queueing actions  
 // precise export image size
 // shading based on angle
@@ -3337,6 +3398,9 @@ int main()
 // height cap according to adjustable plane / mesh
 // smooth selection
 // make it so pressing x doesnt overlap with shift or ctrl x
+// have ray collision detect save last hit location and test starting from there first in subsequent frames
+// insert a size reference dummy model (human, tree, etc)
+// top down camera mode
 
 // -crash after ~141 history steps (if 3x3+ mesh?)
 // -loading 2x3 image 'test' twice in a row crashes
@@ -3479,6 +3543,8 @@ Color* GenHeightmapSelection(const std::vector<std::vector<Model>>& models, cons
 
 Color* GenHeightmap(const Model& model, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY, bool grayscale)
 {
+    // this version of GenHeightMap is used only for texturing the models in the editor, not exporting. it matches pixels 1:1 with polys rather than vertices
+    
     Color* pixels = (Color*)RL_MALLOC((modelVertexWidth - 1)*(modelVertexHeight - 1)*sizeof(Color)); 
     
     for(int i = 0; i < (model.meshes[0].vertexCount * 3) - 2; i += 3) // find if there is a new highestY and/or lowestY
@@ -3547,13 +3613,14 @@ Color* GenHeightmap(const Model& model, int modelVertexWidth, int modelVertexHei
 }
 
 
-Color* GenHeightmap(const std::vector<std::vector<Model>>& models, int modelVertexWidth, int modelVertexHeight, float maxHeight, float minHeight)
+Color* GenHeightmap(const std::vector<std::vector<Model>>& models, int modelVertexWidth, int modelVertexHeight, float maxHeight, float minHeight, bool grayscale)
 {
+    // this version of GenHeightMap is for exporting the heightmap only. it matches pixels 1:1 with vertices rather than polys
     //(assumes modelVertexWidth and modelVertexHeight are actually the same)
     int modelsSizeX = (int)models.size(); // number of model columns
     int modelsSizeY = (int)models[0].size(); // number of model rows
     int numOfModels = modelsSizeX * modelsSizeY; // find the number of models being used
-    int numOfPixels = (modelVertexWidth * modelsSizeX - (modelsSizeX - 1)) * (modelVertexHeight * modelsSizeY - (modelsSizeY - 1)); // number of pixels in the image
+    int numOfPixels = (modelVertexWidth * modelsSizeX - (modelsSizeX - 1)) * (modelVertexHeight * modelsSizeY - (modelsSizeY - 1)); // number of pixels in the image. - (modelsSize - 1) so that overlapping pixels are only counted once
     
     Color* pixels = (Color*)RL_MALLOC(numOfPixels*sizeof(Color));
     
@@ -3581,12 +3648,58 @@ Color* GenHeightmap(const std::vector<std::vector<Model>>& models, int modelVert
                 int vertexIndex = GetVertexIndices(x, y, modelVertexWidth)[0]; // use x and y to get the actual index in the vertex array (only need one from the returned list)
                 int pixelIndex = j * rowPixelCount + (i * modelVertexWidth - i) + increment + k; // index in the pixel array that corresponds to this vertex
                 
-                unsigned char pixelValue = (abs((maxHeight - models[i][j].meshes[0].vertices[vertexIndex+1]) - scale) / scale) * 255;
-                
-                pixels[pixelIndex].r = pixelValue;
-                pixels[pixelIndex].g = pixelValue;
-                pixels[pixelIndex].b = pixelValue;
-                pixels[pixelIndex].a = 255;
+                if (grayscale)
+                {
+                    unsigned char pixelValue = (abs((maxHeight - models[i][j].meshes[0].vertices[vertexIndex+1]) - scale) / scale) * 255;
+                    
+                    pixels[pixelIndex].r = pixelValue;
+                    pixels[pixelIndex].g = pixelValue;
+                    pixels[pixelIndex].b = pixelValue;
+                    pixels[pixelIndex].a = 255;
+                }
+                else
+                {
+                    // use all channels of the png to save height data at much greater resolution
+                    unsigned int pixelValue = (abs((maxHeight - models[i][j].meshes[0].vertices[vertexIndex+1]) - scale) / scale) * 2147483647;
+                    
+                    std::bitset<32> pixelBits(pixelValue); // pixelValue in binary
+                    std::bitset<8> redBits; // red channel in binary
+                    std::bitset<8> greenBits; // green channel in binary
+                    std::bitset<8> blueBits; // blue channel in binary
+                    std::bitset<8> alphaBits; // alpha channel in binary
+                    
+                    int pixelBitsIndex = 0; // which bit in pixelBits needs to be copied next
+                    
+                    for (int i = 0; i < 8; i++) // copy the first 8 bits (right to left) of pixelBits into the red channel
+                    {
+                        redBits[i] = pixelBits[pixelBitsIndex];
+                        pixelBitsIndex++;  
+                    }
+                    
+                    for (int i = 0; i < 8; i++) // copy the second set of 8 bits into the green channel, and so on
+                    {
+                        greenBits[i] = pixelBits[pixelBitsIndex];
+                        pixelBitsIndex++;  
+                    }
+                    
+                    for (int i = 0; i < 8; i++)
+                    {
+                        blueBits[i] = pixelBits[pixelBitsIndex];
+                        pixelBitsIndex++;  
+                    }
+                    
+                    for (int i = 0; i < 8; i++)
+                    {
+                        alphaBits[i] = pixelBits[pixelBitsIndex];
+                        pixelBitsIndex++;  
+                    }
+                    
+                    // convert from binary to unsigned char and assign the channels their values
+                    pixels[pixelIndex].r = (unsigned char)redBits.to_ulong();
+                    pixels[pixelIndex].g = (unsigned char)greenBits.to_ulong();
+                    pixels[pixelIndex].b = (unsigned char)blueBits.to_ulong();
+                    pixels[pixelIndex].a = (unsigned char)alphaBits.to_ulong();
+                }
             }
         }
     }
@@ -4487,6 +4600,189 @@ void Smooth(std::vector<std::vector<Model>>& models, const std::vector<VertexSta
     }
     
     return;
+}
+
+
+unsigned long PixelToHeight(Color pixel)
+{
+    std::bitset<32> heightValueBits;
+    int heightValueIndex = 0;
+    
+    std::bitset<8> redPixels(pixel.r);
+    
+    for (int i = 0; i < 8; i++)
+    {
+        heightValueBits[heightValueIndex] = redPixels[i];
+        heightValueIndex++;
+    }
+    
+    std::bitset<8> greenPixels(pixel.g);
+    
+    for (int i = 0; i < 8; i++)
+    {
+        heightValueBits[heightValueIndex] = greenPixels[i];
+        heightValueIndex++;
+    }
+    
+    std::bitset<8> bluePixels(pixel.b);
+    
+    for (int i = 0; i < 8; i++)
+    {
+        heightValueBits[heightValueIndex] = bluePixels[i];
+        heightValueIndex++;
+    }
+    
+    std::bitset<8> alphaPixels(pixel.a);
+    
+    for (int i = 0; i < 8; i++)
+    {
+        heightValueBits[heightValueIndex] = alphaPixels[i];
+        heightValueIndex++;
+    }
+    
+    return heightValueBits.to_ulong();
+}
+
+
+Mesh GenMeshHeightmap32bit(Image heightmap, Vector3 size)
+{
+    Mesh mesh = { 0 };
+    mesh.vboId = (unsigned int *)RL_CALLOC(7, sizeof(unsigned int));
+
+    int mapX = heightmap.width;
+    int mapZ = heightmap.height;
+
+    Color *pixels = GetImageData(heightmap);
+
+    // NOTE: One vertex per pixel
+    mesh.triangleCount = (mapX-1)*(mapZ-1)*2;    // One quad every four pixels
+
+    mesh.vertexCount = mesh.triangleCount*3;
+
+    mesh.vertices = (float *)RL_MALLOC(mesh.vertexCount*3*sizeof(float));
+    mesh.normals = (float *)RL_MALLOC(mesh.vertexCount*3*sizeof(float));
+    mesh.texcoords = (float *)RL_MALLOC(mesh.vertexCount*2*sizeof(float));
+    mesh.colors = NULL;
+
+    int vCounter = 0;       // Used to count vertices float by float
+    int tcCounter = 0;      // Used to count texcoords float by float
+    int nCounter = 0;       // Used to count normals float by float
+
+    int trisCounter = 0;
+
+    Vector3 scaleFactor = { size.x/mapX, size.y/2147483647.f, size.z/mapZ };
+
+    Vector3 vA;
+    Vector3 vB;
+    Vector3 vC;
+    Vector3 vN;
+
+    for (int z = 0; z < mapZ-1; z++)
+    {
+        for (int x = 0; x < mapX-1; x++)
+        {
+            // Fill vertices array with data
+            //----------------------------------------------------------
+
+            // one triangle - 3 vertex
+            
+            unsigned long heightValue = PixelToHeight(pixels[x + z*mapX]);
+            
+            mesh.vertices[vCounter] = (float)x*scaleFactor.x;
+            mesh.vertices[vCounter + 1] = (float)heightValue*scaleFactor.y;
+            mesh.vertices[vCounter + 2] = (float)z*scaleFactor.z;
+            
+            unsigned long heightValue2 = PixelToHeight(pixels[x + (z + 1)*mapX]);
+
+            mesh.vertices[vCounter + 3] = (float)x*scaleFactor.x;
+            mesh.vertices[vCounter + 4] = (float)heightValue2*scaleFactor.y;
+            mesh.vertices[vCounter + 5] = (float)(z + 1)*scaleFactor.z;
+            
+            unsigned long heightValue3 = PixelToHeight(pixels[(x + 1) + z*mapX]);
+
+            mesh.vertices[vCounter + 6] = (float)(x + 1)*scaleFactor.x;
+            mesh.vertices[vCounter + 7] = (float)heightValue3*scaleFactor.y;
+            mesh.vertices[vCounter + 8] = (float)z*scaleFactor.z;
+
+            // another triangle - 3 vertex
+            mesh.vertices[vCounter + 9] = mesh.vertices[vCounter + 6];
+            mesh.vertices[vCounter + 10] = mesh.vertices[vCounter + 7];
+            mesh.vertices[vCounter + 11] = mesh.vertices[vCounter + 8];
+
+            mesh.vertices[vCounter + 12] = mesh.vertices[vCounter + 3];
+            mesh.vertices[vCounter + 13] = mesh.vertices[vCounter + 4];
+            mesh.vertices[vCounter + 14] = mesh.vertices[vCounter + 5];
+            
+            unsigned long heightValue4 = PixelToHeight(pixels[(x + 1) + (z + 1)*mapX]);
+
+            mesh.vertices[vCounter + 15] = (float)(x + 1)*scaleFactor.x;
+            mesh.vertices[vCounter + 16] = (float)heightValue4*scaleFactor.y;
+            mesh.vertices[vCounter + 17] = (float)(z + 1)*scaleFactor.z;
+            vCounter += 18;     // 6 vertex, 18 floats
+
+            // Fill texcoords array with data
+            //--------------------------------------------------------------
+            mesh.texcoords[tcCounter] = (float)x/(mapX - 1);
+            mesh.texcoords[tcCounter + 1] = (float)z/(mapZ - 1);
+
+            mesh.texcoords[tcCounter + 2] = (float)x/(mapX - 1);
+            mesh.texcoords[tcCounter + 3] = (float)(z + 1)/(mapZ - 1);
+
+            mesh.texcoords[tcCounter + 4] = (float)(x + 1)/(mapX - 1);
+            mesh.texcoords[tcCounter + 5] = (float)z/(mapZ - 1);
+
+            mesh.texcoords[tcCounter + 6] = mesh.texcoords[tcCounter + 4];
+            mesh.texcoords[tcCounter + 7] = mesh.texcoords[tcCounter + 5];
+
+            mesh.texcoords[tcCounter + 8] = mesh.texcoords[tcCounter + 2];
+            mesh.texcoords[tcCounter + 9] = mesh.texcoords[tcCounter + 3];
+
+            mesh.texcoords[tcCounter + 10] = (float)(x + 1)/(mapX - 1);
+            mesh.texcoords[tcCounter + 11] = (float)(z + 1)/(mapZ - 1);
+            tcCounter += 12;    // 6 texcoords, 12 floats
+
+            // Fill normals array with data
+            //--------------------------------------------------------------
+            for (int i = 0; i < 18; i += 9)
+            {
+                vA.x = mesh.vertices[nCounter + i];
+                vA.y = mesh.vertices[nCounter + i + 1];
+                vA.z = mesh.vertices[nCounter + i + 2];
+
+                vB.x = mesh.vertices[nCounter + i + 3];
+                vB.y = mesh.vertices[nCounter + i + 4];
+                vB.z = mesh.vertices[nCounter + i + 5];
+
+                vC.x = mesh.vertices[nCounter + i + 6];
+                vC.y = mesh.vertices[nCounter + i + 7];
+                vC.z = mesh.vertices[nCounter + i + 8];
+
+                vN = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vB, vA), Vector3Subtract(vC, vA)));
+
+                mesh.normals[nCounter + i] = vN.x;
+                mesh.normals[nCounter + i + 1] = vN.y;
+                mesh.normals[nCounter + i + 2] = vN.z;
+
+                mesh.normals[nCounter + i + 3] = vN.x;
+                mesh.normals[nCounter + i + 4] = vN.y;
+                mesh.normals[nCounter + i + 5] = vN.z;
+
+                mesh.normals[nCounter + i + 6] = vN.x;
+                mesh.normals[nCounter + i + 7] = vN.y;
+                mesh.normals[nCounter + i + 8] = vN.z;
+            }
+
+            nCounter += 18;     // 6 vertex, 18 floats
+            trisCounter += 2;
+        }
+    }
+
+    RL_FREE(pixels);
+
+    // Upload vertex data to GPU (static mesh)
+    rlLoadMesh(&mesh, false);
+
+    return mesh;
 }
 
 
