@@ -7,6 +7,7 @@
 #include "raymath.h"
 #include "float.h"
 #include <bitset>
+#include <iostream>
 
 
 
@@ -52,6 +53,13 @@ enum class InputFocus // markers for which the input box is currently in focus
     STAMP_OFFSET // the amount to raise or lower the stamp tool
 };
 
+enum class CameraSetting
+{
+    FREE,
+    CHARACTER,
+    TOP_DOWN
+};
+
 // Camera move modes (first person and third person cameras)
 typedef enum 
 { 
@@ -69,8 +77,8 @@ struct VertexState
     int index; // which in Mesh::vertices corresponds to the x value
     float y; // y value of the vertex
     
-    friend bool operator== (const VertexState &vs1, const VertexState &vs2);
-    friend bool operator!= (const VertexState &vs1, const VertexState &vs2);
+    friend bool operator== (const VertexState& vs1, const VertexState& vs2);
+    friend bool operator!= (const VertexState& vs1, const VertexState& vs2);
 };
 
 struct ModelSelection
@@ -83,12 +91,22 @@ struct ModelSelection
     
     std::vector<Vector2> selection; // a list of the coordinates of the selected models
     std::vector<Vector2> expandedSelection; // selection plus adjacent models
+    
+    friend bool operator== (const ModelSelection& ms1, const ModelSelection& ms2);
+    friend bool operator!= (const ModelSelection& ms1, const ModelSelection& ms2);
+};
+
+struct HistoryStep
+{
+    std::vector<VertexState> startingVertices; // info of the vertices recorded by this step as they were before the edit happened
+    std::vector<VertexState> endingVertices; // info of the vertices recorded by this step as they are after the edit happened
+    std::vector<Vector2> modelCoords; // list of the model coordinates recorded by this step, sorted left to right, top to bottom
 };
 
 
 float xzDistance(Vector2 p1, Vector2 p2); // get the distance between two points on the x and z plane
 
-void HistoryUpdate(std::vector<std::vector<VertexState>>& history, const std::vector<std::vector<Model>>& models, const std::vector<Vector2>& modelCoords, int& stepIndex, int maxSteps);
+void NewHistoryStep(std::vector<HistoryStep>& history, const std::vector<std::vector<Model>>& models, const std::vector<Vector2>& modelCoords, int& stepIndex, int maxSteps); // adds another historyStep to history
 
 Color* GenHeightmapSelection(const std::vector<std::vector<Model>>& models, const std::vector<Vector2>& modelCoords, int modelVertexWidth, int modelVertexHeight); // memory should be freed. needs a scale param. generates a heightmap from a selection of models
 
@@ -108,7 +126,7 @@ Vector2 GetVertexCoords(int index, int width); // get the coordindates of a vert
 
 std::vector<Vector2> GetModelCoordsSelection(const std::vector<VertexState>& vsList); // get the coords of each unique model in a list of VertexState
 
-void ModelStitch(std::vector<std::vector<Model>>& models, const ModelSelection &oldModelSelection, int modelVertexWidth, int modelVertexHeight); // merges the overlapping vertices on the edges of adjacent models (no longer used)
+void ModelStitch(std::vector<std::vector<Model>>& models, const ModelSelection &modelSelection, int modelVertexWidth, int modelVertexHeight); // merges the overlapping vertices on the edges of adjacent models (no longer used)
 
 void SetExSelection(ModelSelection& modelSelection, int canvasWidth, int canvasHeight); // populates a model selection's expanded selection, which is selection plus the adjacent models
 
@@ -116,7 +134,7 @@ void FillTerrainCells(ModelSelection& modelSelection, const std::vector<std::vec
 
 void UpdateCharacterCamera(Camera* camera, const std::vector<std::vector<Model>>& models, ModelSelection& terrainCells); // custom update camera function for character camera
 
-void UpdatePerspectiveCamera(Camera* camera); // camera update function for perspective mode
+void UpdateFreeCamera(Camera* camera); // camera update function for perspective mode
 
 void UpdateOrthographicCamera(Camera* camera); // camera update function for orthographic mode
 
@@ -126,7 +144,7 @@ void PrintBoxInfo(Rectangle box, InputFocus currentFocus, InputFocus matchingFoc
 
 void ProcessInput(int key, std::string& s, float& input, InputFocus& inputFocus, int maxSize); // modify string with input and store input as a float. changes input focus as necessary
 
-std::vector<VertexState> FindVertexSelection(const std::vector<std::vector<Model>>& models, const ModelSelection& modelSelection, const RayHitInfo hitPosition, float selectRadius); // find the vertices within the selection radius of the ray hit position
+std::vector<VertexState> FindVertexSelection(const std::vector<std::vector<Model>>& models, const ModelSelection& modelSelection, RayHitInfo hitPosition, float selectRadius); // find the vertices within the selection radius of the ray hit position 
 
 void FindStampPoints(float stampRotationAngle, float stampStretchLength, Vector2& outVec1, Vector2& outVec2, Vector2 stampAnchor); // finds the ends of the stamp tool when stretch is active
 
@@ -139,6 +157,27 @@ void Smooth(std::vector<std::vector<Model>>& models, const std::vector<VertexSta
 unsigned long PixelToHeight(Color pixel); // takes the bits from each of the 4 png channels and arranges them into one int
 
 Mesh GenMeshHeightmap32bit(Image heightmap, Vector3 size); // version of GenMeshHeightmap that handles split channel heightmaps
+
+void UpdateTopDownCamera(Camera* camera);
+
+RayHitInfo FindHit2D(const Ray& ray, const std::vector<std::vector<Model>>& models, int modelVertexWidth, int modelVertexHeight);
+
+RayHitInfo FindHit3D(const Ray& ray, const std::vector<std::vector<Model>>& models, Vector2& modelCoords, int length = 0, int direction = 1, int loop = 0, int total = 0);
+
+ModelSelection FindModelSelection(int canvasWidth, int canvasHeight, int modelWidth, Vector2 modelCoords, float selectRadius);
+
+void ExtendHistoryStep(HistoryStep& historyStep, const std::vector<std::vector<Model>>& models, const ModelSelection& modelCoords); // add vertex info to the history step when it's edit range increases mid edit
+
+void FinalizeHistoryStep(HistoryStep& historyStep, const std::vector<std::vector<Model>>& models); // record the ending state of all vertices in this history step's range when the edit is complete
+
+int BinarySearchVec2(Vector2 vec2, const std::vector<Vector2>&v, int &i); // binary search for vector2. returns the index where vec2 was found, -1 if not found. i will be changed to the index where vec2 should be inserted
+
+template<class T, class T2>
+int BinarySearch(T var, const std::vector<T2>&v, int &i); // returns the index where var was found, -1 if not found. i will be changed to the index where var should be inserted
+
+template<class T, class T2>
+int BinarySearch(T var, const std::vector<T2>&v); // returns the index where var was found, -1 if not found
+
 
 
 
@@ -164,14 +203,14 @@ static int cameraMoveControl[6]  = { 'W', 'S', 'D', 'A', 'E', 'Q' };
 
 int main()
 {
-    const int windowWidth = 1800;//1270;
-    const int windowHeight = 900;//720;
+    const int windowWidth = 1800;
+    const int windowHeight = 900;
     const int maxSteps = 10;   // number of changes to keep track of for the history
     const int modelVertexWidth = 120; // 360x360 aprox max before fps <60 with raycollision
     const int modelVertexHeight = 120;  
     const int modelWidth = 12;
     const int modelHeight = 12;
-    int stepIndex = 0;
+    int stepIndex = 0; // the current location in history
     int canvasWidth = 0; // in number of models
     int canvasHeight = 0; // in number of models
     float timeCounter = 0; // used to track number of frames passed
@@ -186,11 +225,9 @@ int main()
     float stampRotationAngle = 0.0f;
     float stampSlope = 0.0f;
     float stampOffset = 0.0f;
-    bool updateFlag = false;
+    bool updateFlag = false; // true when mouse left click has not been released since an edit operation has been done (aka true when painting)
     bool selectionMask = false;
-    bool historyFlag = false; // true if the last entry made to history was not made by an undo operation (so undo can save state without making possible copies)
     bool characterDrag = false; // true when the character camera placement is being held
-    bool characterMode = false; // if camera is in character mode
     bool rayCollision2d = true; // if true, ray collision will be tested against the ground plane instead of the actual mesh 
     bool raiseOnly = true; // if true, brush will check if the vertex is higher than what it's attempting to change it to and if so, not alter it
     bool showSaveWindow = false; // whether or not to display the save window with the export options
@@ -206,11 +243,13 @@ int main()
     bool saveGrayscale = true; // true to save the heightmap as grayscale, false to save using all png channels (looks weird, saves more height resolution)
     bool loadGrayscale = true; // should be set to true when loading grayscale image
     
-    std::vector<std::vector<VertexState>> history;
+    Vector2 lastRayHitLoc = {0, 0}; // coordinates of the model the mouse ray last hit
+    
+    std::vector<HistoryStep> history;
     std::vector<VertexState> vertexSelection;
     std::vector<std::vector<Model>> models;      // 2d vector of all models
     
-    std::vector<Model> ghostMesh;  // copy of a selection of models used for collision detection
+    std::vector<std::vector<Model>> ghostMesh;  // copy of a selection of models used for collision detection
     
     std::string xMeshString; // models on the x axis
     std::string zMeshString; // models on the z axis
@@ -287,7 +326,7 @@ int main()
     
     // CAMERA PANEL
     Rectangle characterButton = {63, 55, 33, 33};
-    Rectangle cameraTypeBox = {66, 160, 30, 14};
+    Rectangle cameraSettingBox = {10, 120, 14, 14};
     
     // TOOL PANEL
     Rectangle elevToolButton = {toolButtonAnchor.x + 16, toolButtonAnchor.y + 35, 25, 25};
@@ -331,6 +370,7 @@ int main()
     BrushTool brush = BrushTool::NONE;
     Panel panel = Panel::NONE;
     InputFocus inputFocus = InputFocus::NONE;
+    CameraSetting cameraSetting = CameraSetting::FREE;
     
     InitWindow(windowWidth, windowHeight, "Pangea");
     
@@ -349,7 +389,7 @@ int main()
     
     while (!WindowShouldClose())
     {
-        if (characterMode)
+        if (cameraSetting == CameraSetting::CHARACTER)
         {
             UpdateCharacterCamera(&camera, models, terrainCells);
             
@@ -357,7 +397,7 @@ int main()
             {
                 SetCameraMode(camera, CAMERA_FREE);
                 camera.fovy = 45.0f;
-                characterMode = false;
+                cameraSetting = CameraSetting::FREE;
                 terrainCells.selection.clear();
                 EnableCursor();
             }
@@ -388,7 +428,12 @@ int main()
         else
         {
             if (inputFocus == InputFocus::NONE) // dont move the camera if typing
-                UpdatePerspectiveCamera(&camera);
+            {
+                if (cameraSetting == CameraSetting::FREE)
+                    UpdateFreeCamera(&camera);
+                else if (cameraSetting == CameraSetting::TOP_DOWN)
+                    UpdateTopDownCamera(&camera);
+            }
             
             RayHitInfo hitPosition;
             hitPosition.hit = false;
@@ -397,12 +442,14 @@ int main()
             Vector2 stamp2;
             
             std::vector<VertexState> vertexIndices;   // information of the vertices within the select radius
+            static ModelSelection lastEditSelection; // models that were last edited. if updateFlag is true and lastEditSelection is different from editSelection while making an edit, the current history step will be updated
+            ModelSelection editSelection; // models that are being edited this tick
             
             Vector2 mousePosition = GetMousePosition();
             bool mousePressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
             bool mouseDown = IsMouseButtonDown(MOUSE_LEFT_BUTTON);
             
-            if (mouseDown && (IsKeyDown(KEY_R) || IsKeyDown(KEY_V)) || IsKeyDown(KEY_G)) // check if keys are down that perclude mouse click edits from happening
+            if (mouseDown && (IsKeyDown(KEY_R) || IsKeyDown(KEY_V)) || IsKeyDown(KEY_G)) // check if keys are down that preclude mouse click edits from happening
             {
                 mouseDown = false;
             }
@@ -578,18 +625,8 @@ int main()
                     
                     history.clear(); // clear history if the canvas is shrunk so that undo operations dont go out of bounds
                     stepIndex = 0;
-                    historyFlag = false;
                     
                     modelSelection.selection.clear();
-                    modelSelection.selection.push_back(Vector2{0, 0}); // set selection to the first model after loading
-                    
-                    modelSelection.width = 1;
-                    modelSelection.height = 1;
-                    modelSelection.topLeft = Vector2{0, 0};
-                    modelSelection.bottomRight = Vector2{0, 0};
-                    
-                    modelSelection.expandedSelection.clear();
-                    SetExSelection(modelSelection, canvasWidth, canvasHeight);
                     
                     for (int i = 0; i < models.size(); i++)
                     {
@@ -768,7 +805,6 @@ int main()
                                     
                                     history.clear(); // clear history if the canvas is shrunk so that undo operations dont go out of bounds
                                     stepIndex = 0;
-                                    historyFlag = false;
                                 }
                                 
                                 canvasWidth = xInput;
@@ -777,7 +813,6 @@ int main()
                                 {
                                     history.clear(); // clear history if the canvas is shrunk so that undo operations dont go out of bounds
                                     stepIndex = 0;
-                                    historyFlag = false;  
                                 }
                                 
                                 if (canvasWidth)
@@ -788,7 +823,7 @@ int main()
                                     {
                                         if (models[i].size() > newLength) // z will need to be cut in existing columns, but may have to be expanded in new ones
                                         {
-                                            for (int j = models[i].size() - newLength; j < models[i].size(); j++) // unload models from memory
+                                            for (int j = newLength; j < models[i].size(); j++) // unload models from memory
                                             {
                                                 UnloadModel(models[i][j]);
                                             }
@@ -815,7 +850,7 @@ int main()
                                                 
                                                 model.materials[0].maps[MAP_DIFFUSE].texture = tex;
                                                 
-                                                float xOffset = (float)i * (modelWidth - (1 / (float)modelVertexWidth) * modelWidth);
+                                                float xOffset = (float)i * (modelWidth - (1 / (float)modelVertexWidth) * modelWidth); // adjust x and y values by multiples of modelWidth/Height minus the width/height of one poly in the mesh
                                                 float zOffset = (float)j * (modelHeight - (1 / (float)modelVertexHeight) * modelHeight);
                                                 
                                                 for (int i = 0; i < (model.meshes[0].vertexCount * 3) - 2; i += 3) // adjust vertex locations. (probably more sophisticated to do something with the transform but w/e)
@@ -831,48 +866,6 @@ int main()
                                     
                                     canvasHeight = zInput; 
                                 }
-                                
-                                if (modelSelection.selection.empty() && !models.empty()) // if models selection is empty, add the first model as the default selection 
-                                {
-                                    modelSelection.selection.push_back(Vector2{0, 0});
-                                    
-                                    modelSelection.width = 1;
-                                    modelSelection.height = 1;
-                                    modelSelection.topLeft = Vector2{0, 0};
-                                    modelSelection.bottomRight = Vector2{0, 0};
-                                }
-                                else
-                                {
-                                    if (canvasWidth <= modelSelection.topLeft.x || canvasHeight <= modelSelection.topLeft.y) // if the canvas was shrunk past the selection, clear selection
-                                    {
-                                        modelSelection.selection.clear();
-                                        modelSelection.width = 0;
-                                        modelSelection.height = 0;
-                                        modelSelection.topLeft = Vector2{0, 0};
-                                        modelSelection.bottomRight = Vector2{0, 0};                              
-                                    }
-                                    else
-                                    {
-                                        if (canvasWidth <= modelSelection.bottomRight.x || canvasHeight <= modelSelection.bottomRight.y) // if the canvas was shrunk past the selection boundary, shrink the selection to match
-                                        {
-                                            for (int i = 0; i < modelSelection.selection.size(); i++) // remove models from the selection that exceed canvas size
-                                            {
-                                                if (modelSelection.selection[i].x >= canvasWidth || modelSelection.selection[i].y >= canvasHeight)
-                                                {
-                                                    modelSelection.selection.erase(modelSelection.selection.begin() + i);
-                                                    i--;
-                                                }
-                                            }
-                                            
-                                            modelSelection.width = canvasWidth - modelSelection.topLeft.x;
-                                            modelSelection.height = canvasHeight - modelSelection.topLeft.y;
-                                            modelSelection.bottomRight = Vector2{canvasWidth - 1, canvasHeight - 1};                               
-                                        }
-                                    }
-                                }
-                                
-                                modelSelection.expandedSelection.clear();
-                                SetExSelection(modelSelection, canvasWidth, canvasHeight);  
                                 
                                 for (int i = 0; i < models.size(); i++)
                                 {
@@ -968,6 +961,19 @@ int main()
                                 brush = BrushTool::NONE;
                                 characterDrag = true;
                             }
+                            else if (CheckCollisionPointRec(mousePosition, cameraSettingBox))
+                            {
+                                if (cameraSetting != CameraSetting::TOP_DOWN)
+                                {
+                                    cameraAngle.x = 0;
+                                    cameraAngle.y = -1.5;
+                                    cameraSetting = CameraSetting::TOP_DOWN;
+                                }
+                                else
+                                {
+                                    cameraSetting = CameraSetting::FREE;
+                                }
+                            }
                             /*
                             else if (CheckCollisionPointRec(mousePosition, cameraTypeBox))
                             {
@@ -1051,8 +1057,19 @@ int main()
                             }
                             else if (brush == BrushTool::SELECT && CheckCollisionPointRec(mousePosition, trailToolButton) && !vertexSelection.empty() && vertexSelection[vertexSelection.size() - 1].y > 1) // use trail tool
                             {
-                                HistoryUpdate(history, models, modelSelection.expandedSelection, stepIndex, maxSteps);
-                                historyFlag = true;
+                                ModelSelection ms; // list of the models found in vertexSelection
+                                
+                                for (int i = 0; i < vertexSelection.size(); i++) // fill ms with all unique model coords
+                                {
+                                    int index; // insertion index
+                                    
+                                    if (BinarySearchVec2(vertexSelection[i].coords, ms.selection, index) == -1) // if these coords arent found, add them
+                                    {
+                                        ms.selection.insert(ms.selection.begin() + index, vertexSelection[i].coords);
+                                    }
+                                }
+                                
+                                NewHistoryStep(history, models, ms.selection, stepIndex, maxSteps);
                                 
                                 float top = models[vertexSelection[0].coords.x][vertexSelection[0].coords.y].meshes[0].vertices[vertexSelection[0].index + 1];
                                 float bottom = models[vertexSelection[(int)vertexSelection.size() - 1].coords.x][vertexSelection[(int)vertexSelection.size() - 1].coords.y].meshes[0].vertices[vertexSelection[(int)vertexSelection.size() - 1].index + 1];
@@ -1074,12 +1091,17 @@ int main()
                                     models[vertexSelection[i].coords.x][vertexSelection[i].coords.y].meshes[0].vertices[vertexSelection[i].index + 1] = top - (increment * (vertexSelection[i].y - 1));
                                 } 
                                 
-                                for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                                FinalizeHistoryStep(history[stepIndex - 1], models);
+                                
+                                for (int i = 0; i < models.size(); i++)
                                 {
-                                    rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[0], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
-                                    rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[2], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
-                                        
-                                    UpdateHeightmap(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY);   
+                                    for (int j = 0; j < models[i].size(); j++)
+                                    {
+                                        rlUpdateBuffer(models[i][j].meshes[0].vboId[0], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
+                                        rlUpdateBuffer(models[i][j].meshes[0].vboId[2], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
+                                            
+                                        UpdateHeightmap(models[i][j], modelVertexWidth, modelVertexHeight, highestY, lowestY);  
+                                    }                                    
                                 }
                             }
                             else if (brush == BrushTool::SELECT && CheckCollisionPointRec(mousePosition, selectionMaskButton))
@@ -1444,13 +1466,14 @@ int main()
                             {
                                 inputFocus = InputFocus::STAMP_OFFSET;
                             }
-                            else if (CheckCollisionPointRec(mousePosition, ghostMeshBox))
+                            else if (CheckCollisionPointRec(mousePosition, ghostMeshBox) && !modelSelection.selection.empty())
                             {
                                 if (useGhostMesh)
                                 {
                                     for (int i = 0; i < ghostMesh.size(); i++)
                                     {
-                                        UnloadModel(ghostMesh[i]);
+                                        for (int j = 0; j < ghostMesh[i].size(); j++)
+                                            UnloadModel(ghostMesh[i][j]);
                                     }
                                     
                                     ghostMesh.clear();
@@ -1459,11 +1482,16 @@ int main()
                                 }
                                 else
                                 {
-                                    for (int i = 0; i < modelSelection.selection.size(); i++)
+                                    ghostMesh.resize(modelSelection.width);
+                                    
+                                    for (int i = 0; i < modelSelection.width; i++)
                                     {
-                                        Mesh mesh = CopyMesh(models[modelSelection.selection[i].x][modelSelection.selection[i].y].meshes[0]);
-                                        
-                                        ghostMesh.push_back(LoadModelFromMesh(mesh));
+                                        for (int j = 0; j < modelSelection.height; j++)
+                                        {
+                                            Mesh mesh = CopyMesh(models[i + modelSelection.topLeft.x][j + modelSelection.topLeft.y].meshes[0]);
+                                            
+                                            ghostMesh[i].push_back(LoadModelFromMesh(mesh));
+                                        }
                                     }
                                     
                                     useGhostMesh = true;
@@ -1471,7 +1499,8 @@ int main()
                             }
                             else if (brush == BrushTool::SMOOTH && CheckCollisionPointRec(mousePosition, smoothMeshesButton) && !modelSelection.selection.empty()) // smooth all selected models
                             {
-                                // note that the changes done by this operation arent saved by history
+                                NewHistoryStep(history, models, modelSelection.expandedSelection, stepIndex, maxSteps);
+                                
                                 std::vector<VertexState> vertices; // vertices to pass to smooth
                                 
                                 for (int i = 0; i < modelSelection.selection.size(); i++) // loop through all selected models
@@ -1489,15 +1518,19 @@ int main()
                                 
                                 Smooth(models, vertices, modelVertexWidth, modelVertexHeight, canvasWidth, canvasHeight);
                                 
-                                for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
-                                {
-                                    rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[0], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
-                                    rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[2], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
-                                }
+                                ModelStitch(models, modelSelection, modelVertexWidth, modelVertexHeight); // overlapping vertices of adjacent models need to be changed as well
                                 
-                                for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                                FinalizeHistoryStep(history[stepIndex - 1], models);
+                                
+                                for (int i = 0; i < models.size(); i++)
                                 {
-                                    UpdateHeightmap(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                                    for (int j = 0; j < models[i].size(); j++)
+                                    {
+                                        rlUpdateBuffer(models[i][j].meshes[0].vboId[0], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
+                                        rlUpdateBuffer(models[i][j].meshes[0].vboId[2], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
+                                            
+                                        UpdateHeightmap(models[i][j], modelVertexWidth, modelVertexHeight, highestY, lowestY);  
+                                    }                                    
                                 }
                             }
                             
@@ -1508,6 +1541,8 @@ int main()
             }
             else if (brush != BrushTool::NONE) // if mouse is not over a 2d element --------------------------------------------------------------------------------------------------
             {
+                Ray ray = GetMouseRay(GetMousePosition(), camera);
+                
                 if (IsKeyDown(KEY_LEFT_BRACKET) && selectRadius > 0) 
                     selectRadius -= 0.04f;
                 
@@ -1529,8 +1564,6 @@ int main()
                     if (stampRotationAngle < 0)
                         stampRotationAngle += 360;
                 }
-                
-                Ray ray = GetMouseRay(GetMousePosition(), camera);
                 
                 if (IsKeyDown(KEY_R) && mousePressed && !models.empty()) // change selection radius by height eye dropper style
                 {
@@ -1648,60 +1681,60 @@ int main()
                 
                 if (!models.empty()) // find the ray hit position
                 {
-                    if (rayCollision2d)
+                    Vector2 prevRayHitLoc = lastRayHitLoc; // save in case lastRayHitLoc has to be reverted
+                    
+                    if (!IsMouseButtonDown(MOUSE_RIGHT_BUTTON) && !rayCollision2d) // dont try to find the hit position if the camera angle is being adjusted
                     {
-                        hitPosition = GetCollisionRayGround(ray, 0);
-                        
-                        int index1 = GetVertexIndices(modelVertexWidth - 1, 0, modelVertexWidth)[0];
-                        int index2 = GetVertexIndices(0, modelVertexHeight - 1, modelVertexWidth)[0];
-                        
-                        float leftX = models[modelSelection.topLeft.x][modelSelection.topLeft.y].meshes[0].vertices[0];
-                        float rightX = models[modelSelection.bottomRight.x][modelSelection.bottomRight.y].meshes[0].vertices[index1];
-                        float topY = models[modelSelection.topLeft.x][modelSelection.topLeft.y].meshes[0].vertices[2];
-                        float bottomY = models[modelSelection.bottomRight.x][modelSelection.bottomRight.y].meshes[0].vertices[index2 + 2];
-                        
-                        if (hitPosition.position.x < leftX || hitPosition.position.x > rightX || hitPosition.position.z < topY || hitPosition.position.z > bottomY) // if the hit position is outside of the model selection, mark as false
+                        if (useGhostMesh && !ghostMesh.empty()) // if ghost mesh is active, test collision against that rather than models
                         {
-                            hitPosition.hit = false;
+                            hitPosition = FindHit3D(ray, ghostMesh, lastRayHitLoc);
+                        }
+                        else
+                        {
+                            hitPosition = FindHit3D(ray, models, lastRayHitLoc);
+                        }
+                    }
+                    else if (!IsMouseButtonDown(MOUSE_RIGHT_BUTTON) && rayCollision2d)
+                    {
+                        hitPosition = FindHit2D(ray, models, modelVertexWidth, modelVertexHeight);
+                        
+                        if (hitPosition.hit)
+                        {
+                            float realModelWidth = modelWidth - (1 / 120.f) * modelWidth; // modelWidth minus the width of one polygon. ASSUMES MODELVERTEXWIDTH = 120
+                            lastRayHitLoc.x = (int)(hitPosition.position.x / realModelWidth); // convert to int to truncate decimal
+                            lastRayHitLoc.y = (int)(hitPosition.position.z / realModelWidth); 
+                        }
+                    }
+                    
+                    if (hitPosition.hit)
+                    {
+                        if (stampStretch && brush == BrushTool::STAMP) // if stampStretch is on, this affects the range FindModelSelection uses
+                        {
+                            editSelection = FindModelSelection(canvasWidth, canvasHeight, modelWidth, lastRayHitLoc, selectRadius + stampStretchLength/2);
+                        }
+                        else
+                        {
+                            editSelection = FindModelSelection(canvasWidth, canvasHeight, modelWidth, lastRayHitLoc, selectRadius);
                         }
                     }
                     else
                     {
-                        if (useGhostMesh && !ghostMesh.empty()) // if ghost mesh is active, test collision against that rather than models
-                        {
-                            for (int i = 0; i < ghostMesh.size(); i++)
-                            {
-                                hitPosition = GetCollisionRayModel2(ray, &ghostMesh[i]); 
-                                
-                                if (hitPosition.hit) // if collision is found, break the search
-                                    break;    
-                            }
-                        }
-                        else
-                        {
-                            for (int i = 0; i < modelSelection.selection.size(); i++) // test ray against selected models
-                            {
-                                hitPosition = GetCollisionRayModel2(ray, &models[modelSelection.selection[i].x][modelSelection.selection[i].y]); 
-                                
-                                if (hitPosition.hit) // if collision is found, break the search
-                                    break;
-                            }    
-                        }
+                        lastRayHitLoc = prevRayHitLoc; // if the cursor isnt over a model, reverse changes made to lastRayHitLoc
                     }
                     
                     if (hitPosition.hit && stampStretch && brush == BrushTool::STAMP)
                     {
-                        vertexIndices = FindVertexSelection(models, modelSelection, hitPosition, stampStretchLength); // this info will be used to find the height of the cylinders drawn around hit position
+                        vertexIndices = FindVertexSelection(models, editSelection, hitPosition, stampStretchLength); // this info will be used to find the height of the cylinders drawn around hit position
                         
                         FindStampPoints(stampRotationAngle, stampStretchLength, stamp1, stamp2, Vector2{hitPosition.position.x, hitPosition.position.z});
                     }
                     else if (hitPosition.hit && innerRadius > 0 && brush == BrushTool::STAMP)
                     {
-                        vertexIndices = FindVertexSelection(models, modelSelection, hitPosition, selectRadius+innerRadius);
+                        vertexIndices = FindVertexSelection(models, editSelection, hitPosition, selectRadius+innerRadius);
                     }
                     else if (hitPosition.hit)
                     {
-                        vertexIndices = FindVertexSelection(models, modelSelection, hitPosition, selectRadius);
+                        vertexIndices = FindVertexSelection(models, editSelection, hitPosition, selectRadius);
                     }
                 }
                 
@@ -1709,8 +1742,11 @@ int main()
                 {
                     if (!updateFlag) // update the history before executing if this is the first tick of the operation
                     {
-                        HistoryUpdate(history, models, modelSelection.expandedSelection, stepIndex, maxSteps);
-                        historyFlag = true;
+                        NewHistoryStep(history, models, editSelection.selection, stepIndex, maxSteps);
+                    }
+                    else if (editSelection != lastEditSelection)
+                    {
+                        ExtendHistoryStep(history[stepIndex - 1], models, editSelection);
                     }
                     
                     if (IsKeyDown(KEY_LEFT_CONTROL)) // do the inverse if left ctrl is held
@@ -1768,19 +1804,19 @@ int main()
                         }                   
                     }
                     
-                    for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                    for (int i = 0; i < editSelection.selection.size(); i++)
                     {
-                        rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[0], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
-                        rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[2], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
+                        rlUpdateBuffer(models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vboId[0], models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertices, models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
+                        rlUpdateBuffer(models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vboId[2], models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertices, models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
                     }
                     
                     timeCounter += GetFrameTime();
                     
                     if (timeCounter >= 0.1f) // update heightmap every tenth of a second
                     {
-                        for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                        for (int i = 0; i < editSelection.selection.size(); i++)
                         {
-                            UpdateHeightmap(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
                         }
                         
                         timeCounter = 0;
@@ -1793,8 +1829,11 @@ int main()
                 {
                     if (!updateFlag) // update the history before executing if this is the first tick of the operation
                     {
-                        HistoryUpdate(history, models, modelSelection.expandedSelection, stepIndex, maxSteps);
-                        historyFlag = true;
+                        NewHistoryStep(history, models, editSelection.selection, stepIndex, maxSteps);
+                    }
+                    else if (editSelection != lastEditSelection)
+                    {
+                        ExtendHistoryStep(history[stepIndex - 1], models, editSelection);
                     }
                     
                     if (selectionMask) // if selection mask is on, dont modify selected vertices
@@ -1822,19 +1861,19 @@ int main()
                             models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index+1] = hitPosition.position.y;
                     }    
                     
-                    for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                    for (int i = 0; i < editSelection.selection.size(); i++)
                     {
-                        rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[0], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
-                        rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[2], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
+                        rlUpdateBuffer(models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vboId[0], models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertices, models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
+                        rlUpdateBuffer(models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vboId[2], models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertices, models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
                     }
                     
                     timeCounter += GetFrameTime();
                     
                     if (timeCounter >= 0.1f)
                     {
-                        for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                        for (int i = 0; i < editSelection.selection.size(); i++)
                         {
-                            UpdateHeightmap(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
                         }
                         
                         timeCounter = 0;
@@ -1907,8 +1946,11 @@ int main()
                 {
                     if (!updateFlag) // update the history before executing if this is the first tick of the operation
                     {
-                        HistoryUpdate(history, models, modelSelection.expandedSelection, stepIndex, maxSteps);
-                        historyFlag = true;
+                        NewHistoryStep(history, models, editSelection.selection, stepIndex, maxSteps);
+                    }
+                    else if (editSelection != lastEditSelection)
+                    {
+                        ExtendHistoryStep(history[stepIndex - 1], models, editSelection);
                     }
                     
                     if (selectionMask) // if selection mask is on, dont modify selected vertices
@@ -1941,19 +1983,19 @@ int main()
                         Smooth(models, vertexIndices, modelVertexWidth, modelVertexHeight, canvasWidth, canvasHeight);
                     }  
 
-                    for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                    for (int i = 0; i < editSelection.selection.size(); i++)
                     {
-                        rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[0], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
-                        rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[2], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
+                        rlUpdateBuffer(models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vboId[0], models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertices, models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
+                        rlUpdateBuffer(models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vboId[2], models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertices, models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
                     }
                     
                     timeCounter += GetFrameTime();
                     
                     if (timeCounter >= 0.1f) // update the heightmap at intervals of .1 seconds while the tool is being used
                     {
-                        for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                        for (int i = 0; i < editSelection.selection.size(); i++)
                         {
-                            UpdateHeightmap(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY);
                         }
                         
                         timeCounter = 0;
@@ -1966,8 +2008,11 @@ int main()
                 {
                     if (!updateFlag) // update the history before executing if this is the first tick of the operation
                     {
-                        HistoryUpdate(history, models, modelSelection.expandedSelection, stepIndex, maxSteps);
-                        historyFlag = true;
+                        NewHistoryStep(history, models, editSelection.selection, stepIndex, maxSteps);
+                    }
+                    else if (editSelection != lastEditSelection)
+                    {
+                        ExtendHistoryStep(history[stepIndex - 1], models, editSelection);
                     }
                     
                     static Vector2 previousLocation; // location of the last hit position
@@ -2098,19 +2143,13 @@ int main()
                             
                             if (useGhostMesh && !ghostMesh.empty())
                             {
-                                for (int i = 0; i < ghostMesh.size(); i++)
-                                {
-                                    hp = GetCollisionRayModel2(ray, &ghostMesh[i]);
-                                    
-                                    if (hp.hit) 
-                                        break;
-                                } 
+                                hp = FindHit3D(ray, ghostMesh, lastRayHitLoc);
                             }
                             else
                             {
-                                for (int i = 0; i < modelSelection.selection.size(); i++)
+                                for (int i = 0; i < editSelection.selection.size(); i++)
                                 {
-                                    hp = GetCollisionRayModel2(ray, &models[modelSelection.selection[i].x][modelSelection.selection[i].y]);
+                                    hp = GetCollisionRayModel2(ray, &models[editSelection.selection[i].x][editSelection.selection[i].y]);
                                     
                                     if (hp.hit) 
                                         break;
@@ -2118,13 +2157,13 @@ int main()
                             }
                         }
                         
-                        for (int i = 0; i < modelSelection.expandedSelection.size(); i++) // check all models recorded by modelSelection for vertices to be modified
+                        for (int i = 0; i < editSelection.selection.size(); i++) // check all models recorded by modelSelection for vertices to be modified
                         {
-                            for (int j = 0; j < (models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount * 3) - 2; j += 3) // check this models vertices
+                            for (int j = 0; j < (models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertexCount * 3) - 2; j += 3) // check this models vertices
                             {
-                                float& vertexY = models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j + 1]; // make an alias for this montrosity
+                                float& vertexY = models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertices[j + 1]; // make an alias for this montrosity
                                 
-                                Vector2 vertexCoords = {models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j+2]};
+                                Vector2 vertexCoords = {models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertices[j], models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertices[j+2]};
                             
                                 float dist = PointSegmentDistance(vertexCoords, stamp1, stamp2);
                                 
@@ -2219,19 +2258,19 @@ int main()
                     stampDrag = true; // set to true so subsequent edits will act accordingly. reset to false on mouse click release
                     previousLocation = {hitPosition.position.x, hitPosition.position.z}; // change previous location to current location so it's ready for the next tick
                     
-                    for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                    for (int i = 0; i < editSelection.selection.size(); i++)
                     {
-                        rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[0], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
-                        rlUpdateBuffer(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vboId[2], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices, models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
+                        rlUpdateBuffer(models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vboId[0], models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertices, models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
+                        rlUpdateBuffer(models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vboId[2], models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertices, models[editSelection.selection[i].x][editSelection.selection[i].y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
                     }
                     
                     timeCounter += GetFrameTime();
                     
                     if (timeCounter >= 0.1f) // update heightmap every tenth of a second
                     {
-                        for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                        for (int i = 0; i < editSelection.selection.size(); i++)
                         {
-                            UpdateHeightmap(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
                         }
                         
                         timeCounter = 0;
@@ -2240,6 +2279,10 @@ int main()
                     updateFlag = true;
                 }
             
+                if (hitPosition.hit)
+                {
+                    lastEditSelection = editSelection; // update what the lastEditSelection was 
+                }
             }
             else
             {
@@ -2361,7 +2404,7 @@ int main()
                             camera.position = Vector3{hitPosition.position.x, hitPosition.position.y + playerEyesHeight, hitPosition.position.z};
                             SetCameraMode(camera, CAMERA_CUSTOM);
                             camera.fovy = 65.0f;
-                            characterMode = true;
+                            cameraSetting = CameraSetting::CHARACTER;
                             DisableCursor();
                         }
                     }
@@ -2375,11 +2418,13 @@ int main()
                         stampDrag = false;
                     }
                     
-                    if (updateFlag)
+                    if (updateFlag) // if an edit was just completed
                     {
-                        for (int i = 0; i < modelSelection.expandedSelection.size(); i++)
+                        FinalizeHistoryStep(history[stepIndex - 1], models);
+                        
+                        for (int i = 0; i < history[stepIndex - 1].modelCoords.size(); i++)
                         {
-                            UpdateHeightmap(models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                            UpdateHeightmap(models[history[stepIndex - 1].modelCoords[i].x][history[stepIndex - 1].modelCoords[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY);
                         }
                         
                         updateFlag = false;                
@@ -2389,61 +2434,50 @@ int main()
             
             if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_Z) && stepIndex > 0 && !history.empty()) // undo key
             {
-                if (stepIndex == (int)history.size() && historyFlag) // if the last edit was not done by an undo operation, create a new entry saving the current state before reversing
+                for (int i = 0; i < history[stepIndex - 1].startingVertices.size(); i++) // reinstate the previous state of the mesh as recorded by the startingVertices at stepIndex - 1
                 {
-                    std::vector<Vector2> modelCoords = GetModelCoordsSelection(history[history.size() - 1]); // get the model selection of the last entry to use for this new entry
+                    int x = history[stepIndex - 1].startingVertices[i].coords.x;
+                    int y = history[stepIndex - 1].startingVertices[i].coords.y;
                     
-                    HistoryUpdate(history, models, modelCoords, stepIndex, maxSteps);
-                    historyFlag = false; // since the last edit will now have been done by a history operation, mark historyFlag false
-                    
-                    stepIndex--;
+                    models[x][y].meshes[0].vertices[history[stepIndex - 1].startingVertices[i].index + 1] = history[stepIndex - 1].startingVertices[i].y; 
                 }
                 
-                for (int i = 0; i < history[stepIndex - 1].size(); i++) // reinstate the previous state of the mesh as recorded by the history at stepIndex - 1
+                for (int i = 0; i < history[stepIndex - 1].modelCoords.size(); i++)
                 {
-                    models[history[stepIndex - 1][i].coords.x][history[stepIndex - 1][i].coords.y].meshes[0].vertices[history[stepIndex - 1][i].index + 1] = history[stepIndex - 1][i].y; 
-                }
-                
-                if (stepIndex > 0) 
-                    stepIndex--;
-                
-                for (int i = 0; i < models.size(); i++)
-                {
-                    for (int j = 0; j < models[i].size(); j++)
-                    {
-                        rlUpdateBuffer(models[i][j].meshes[0].vboId[0], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
-                        rlUpdateBuffer(models[i][j].meshes[0].vboId[2], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
-               
-                        UpdateHeightmap(models[i][j], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
-                    }
-                }           
+                    int x = history[stepIndex - 1].modelCoords[i].x;
+                    int y = history[stepIndex - 1].modelCoords[i].y;
+                    
+                    rlUpdateBuffer(models[x][y].meshes[0].vboId[0], models[x][y].meshes[0].vertices, models[x][y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
+                    rlUpdateBuffer(models[x][y].meshes[0].vboId[2], models[x][y].meshes[0].vertices, models[x][y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
+           
+                    UpdateHeightmap(models[x][y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                }         
+
+                stepIndex--;
             }
             
-            if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_X) && stepIndex < (int)history.size() - 1) //redo key
+            if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_X) && !history.empty() && stepIndex < (int)history.size()) // redo key
             {
-                for (int i = 0; i < history[stepIndex + 1].size(); i++)
+                for (int i = 0; i < history[stepIndex].endingVertices.size(); i++) // reinstate the previous state of the mesh as recorded by the endingVertices at stepIndex
                 {
-                    models[history[stepIndex + 1][i].coords.x][history[stepIndex + 1][i].coords.y].meshes[0].vertices[history[stepIndex + 1][i].index + 1] = history[stepIndex + 1][i].y;
+                    int x = history[stepIndex].endingVertices[i].coords.x;
+                    int y = history[stepIndex].endingVertices[i].coords.y;
+                    
+                    models[x][y].meshes[0].vertices[history[stepIndex].endingVertices[i].index + 1] = history[stepIndex].endingVertices[i].y;
                 }           
 
-                stepIndex++;
-                
-                if (stepIndex == history.size() - 1 && !historyFlag) // if redo moves back to the end of history, remove the last entry, otherwise the next entry made in history will be a copy 
+                for (int i = 0; i < history[stepIndex].modelCoords.size(); i++)
                 {
-                    history.pop_back();
-                    historyFlag = true;
-                }
-                
-                for (int i = 0; i < models.size(); i++)
-                {
-                    for (int j = 0; j < models[i].size(); j++)
-                    {
-                        rlUpdateBuffer(models[i][j].meshes[0].vboId[0], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
-                        rlUpdateBuffer(models[i][j].meshes[0].vboId[2], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
-               
-                        UpdateHeightmap(models[i][j], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
-                    }
-                }                 
+                    int x = history[stepIndex].modelCoords[i].x;
+                    int y = history[stepIndex].modelCoords[i].y;
+                    
+                    rlUpdateBuffer(models[x][y].meshes[0].vboId[0], models[x][y].meshes[0].vertices, models[x][y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
+                    rlUpdateBuffer(models[x][y].meshes[0].vboId[2], models[x][y].meshes[0].vertices, models[x][y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
+           
+                    UpdateHeightmap(models[x][y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                }   
+
+                stepIndex++;               
             }
             
             if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_D) && !vertexSelection.empty()) // deselect
@@ -2529,10 +2563,7 @@ int main()
                 
                     if ((key >= 48) && (key <= 57) && ((int)xMeshSelectString.size() < 5))
                     {
-                        if (key == 48 && xMeshSelectString.empty())
-                        {}
-                        else
-                            xMeshSelectString.push_back((char)key);
+                        xMeshSelectString.push_back((char)key);
                     }
 
                     if (IsKeyPressed(KEY_BACKSPACE) && !xMeshSelectString.empty())
@@ -2549,10 +2580,7 @@ int main()
                 
                     if ((key >= 48) && (key <= 57) && ((int)zMeshSelectString.size() < 5))
                     {
-                        if (key == 48 && zMeshSelectString.empty())
-                        {}
-                        else
-                            zMeshSelectString.push_back((char)key);
+                        zMeshSelectString.push_back((char)key);
                     }
 
                     if (IsKeyPressed(KEY_BACKSPACE) && !zMeshSelectString.empty())
@@ -2797,26 +2825,12 @@ int main()
                         {
                             for (int j = 0; j < models[i].size(); j++)
                             {
-                                bool selected = false;
-                                
-                                for (int k = 0; k < modelSelection.selection.size(); k++) // if the model isn't selected, gray it out
-                                {
-                                    if (i == modelSelection.selection[k].x && j == modelSelection.selection[k].y)
-                                    {
-                                        selected = true;
-                                        break;
-                                    }
-                                }
-                                
-                                if (selected)
-                                    DrawModel(models[i][j], Vector3{0, 0, 0}, 1.0f, WHITE);
-                                else
-                                    DrawModel(models[i][j], Vector3{0, 0, 0}, 1.0f, DARKGRAY);
+                                DrawModel(models[i][j], Vector3{0, 0, 0}, 1.0f, WHITE);
                             }
                         }
                     }
                     
-                    DrawGrid(100, 1.0f);
+                    if (models.empty()) DrawGrid(100, 1.0f);
                     
                     if (hitPosition.hit) // draw brush influence cylinder
                     {
@@ -2881,13 +2895,51 @@ int main()
                         }
                     }
                     
+                    if (!modelSelection.selection.empty()) // draw model selection frame
+                    {
+                        float realModelWidth = modelWidth - (1 / 120.f) * modelWidth; // modelWidth minus the width of one polygon. ASSUMES MODELVERTEXWIDTH = 120
+                        float cubeY;
+                        
+                        if (highestY > realModelWidth)
+                            cubeY = highestY;
+                        else
+                            cubeY = realModelWidth;
+                        
+                        Vector3 position = {(realModelWidth * modelSelection.width) / 2.f + (modelSelection.topLeft.x * realModelWidth), cubeY / 2.f, (realModelWidth * modelSelection.height) / 2.f + (modelSelection.topLeft.y * realModelWidth)};
+                        
+                        DrawCubeWires(position, realModelWidth * modelSelection.width, cubeY, realModelWidth * modelSelection.height, SKYBLUE); 
+                    }
+                    
                 EndMode3D();
                 
+                if (editSelection.selection.size())
+                {
+                    for (int i = 0; i < editSelection.selection.size(); i++)
+                    {
+                        DrawText(FormatText("%02.01f", editSelection.selection[i].x), 1700, 30 + i * 30, 15, BLACK);
+                        DrawText(FormatText("%02.01f", editSelection.selection[i].y), 1730, 30 + i * 30, 15, BLACK);
+                    }
+                }
                 /* debug text
+                DrawText(FormatText("%f", lastRayHitLoc.x), 165, 30, 15, BLACK);
+                DrawText(FormatText("%f", lastRayHitLoc.y), 165, 50, 15, BLACK);
+                
+                if (hitPosition.hit)
+                    DrawText(FormatText("%f", hitPosition.position.x), 400, 30, 15, BLACK);
+                
+                if (history.size())
+                {
+                    for (int i = 0; i < history[stepIndex - 1].modelCoords.size(); i++)
+                    {
+                        DrawText(FormatText("%02.01f", history[stepIndex - 1].modelCoords[i].x), 1700, 30 + i * 30, 15, BLACK);
+                        DrawText(FormatText("%02.01f", history[stepIndex - 1].modelCoords[i].y), 1730, 30 + i * 30, 15, BLACK);
+                    }
+                }
+                
                 float temp = canvasHeight;//history.size();
                 float temp2 = canvasWidth;//stepIndex;
                 
-                DrawText(FormatText("%f", temp), 200, 10, 15, BLACK);
+                
                 DrawText(FormatText("%f", temp2), 165, 10, 15, BLACK);
                 
                 
@@ -2985,9 +3037,13 @@ int main()
                         DrawText("Camera", 4, 72, 11, BLACK);
                         DrawText("Drag & Drop", 15, 92, 11, BLACK);
                         
-                        //DrawRectangleRec(cameraTypeBox, WHITE);
+                        DrawRectangleRec(cameraSettingBox, WHITE);
+                        DrawText("Top Down", 30, 122, 11, BLACK);
                         
                         //DrawText("Camera Sensitivity:", 5, 110, 11, BLACK);
+                        
+                        if (cameraSetting == CameraSetting::TOP_DOWN)
+                            DrawText("+", cameraSettingBox.x + 2, cameraSettingBox.y - 2, 20, BLACK);
                         
                         if (!characterDrag) // dont draw the circle in the rectangle if it's being dragged
                             DrawCircle(characterButton.x + (characterButton.width / 2 + 1), characterButton.y + (characterButton.height / 2 + 1), characterButton.width / 2 - 4, ORANGE);
@@ -3377,16 +3433,13 @@ int main()
 // scale selection
 // saved selections
 // reverse/redo history by x steps
-// directory management, save/load
 // incremented trail tool - 
 // selective history deletion on mesh shrink
-// mesh selection move by one time ray collision on desired center
 // toggle render non selected models
 // trail tool only raise / lower setting
 // brush that takes the average of the normals of the first selection and then flattens out perpedicularly to that
 // vertical line from hitPosition the height of highest y when on ground collision
 // box selection
-// make input boxes save current value, empty it to make room for input, but return the saved value if nothing changed. also make unfocusing = enter
 // dynamic history capacity
 // mesh interpolation
 // setting that checks mouse hit position distances between frames and interpolates between them by queueing actions  
@@ -3395,12 +3448,11 @@ int main()
 // smooth tool angle clamp
 // slope finder: find the slope between two points
 // camera lock onto hitposition at certain angle and distance
-// height cap according to adjustable plane / mesh
+// brush height cap according to adjustable plane / mesh
 // smooth selection
 // make it so pressing x doesnt overlap with shift or ctrl x
 // have ray collision detect save last hit location and test starting from there first in subsequent frames
 // insert a size reference dummy model (human, tree, etc)
-// top down camera mode
 
 // -crash after ~141 history steps (if 3x3+ mesh?)
 // -loading 2x3 image 'test' twice in a row crashes
@@ -3432,12 +3484,12 @@ float xzDistance(Vector2 p1, Vector2 p2)
 }
 
 
-void HistoryUpdate(std::vector<std::vector<VertexState>>& history, const std::vector<std::vector<Model>>& models, const std::vector<Vector2>& modelCoords, int& stepIndex, int maxSteps)
+void NewHistoryStep(std::vector<HistoryStep>& history, const std::vector<std::vector<Model>>& models, const std::vector<Vector2>& modelCoords, int& stepIndex, int maxSteps)
 {
     //check for out of bounds models that have been deleted
     
     // if moving forward from a place in history before the last step, clear all subsequent steps
-    if (stepIndex < (int)history.size() - 1)
+    if (stepIndex < (int)history.size())
     {
         history.erase(history.begin() + stepIndex, history.end());
     }
@@ -3446,26 +3498,36 @@ void HistoryUpdate(std::vector<std::vector<VertexState>>& history, const std::ve
     if (history.size() == maxSteps)
     {
         history.erase(history.begin());
-        stepIndex = history.size() - 1;
+        stepIndex = history.size();
     }
 
-    std::vector<VertexState> state;
+    std::vector<VertexState> state; // info of the vertices recorded by this history step
+    HistoryStep step; // history step to be added to history
     
     for (int i = 0; i < modelCoords.size(); i++) // go through each of the models 
     {
+        int index;
+        
+        if (BinarySearchVec2(modelCoords[i], step.modelCoords, index) == -1) // sort .selection and add it to step.modelCoords
+        {
+            step.modelCoords.insert(step.modelCoords.begin() + index, modelCoords[i]);
+        }
+        
         for (int j = 0; j < (models[modelCoords[i].x][modelCoords[i].y].meshes[0].vertexCount * 3) - 2; j += 3) // save each vertex's data
         {
            VertexState temp;
            temp.index = j;
-           temp.coords = Vector2{modelCoords[i].x, modelCoords[i].y};
+           temp.coords = modelCoords[i];
            temp.y = models[modelCoords[i].x][modelCoords[i].y].meshes[0].vertices[j+1];
            
            state.push_back(temp);
         }
     }
     
-    history.push_back(state);
-    stepIndex = history.size(); // following an edit, stepIndex is one past the last index
+    step.startingVertices = state;
+    
+    history.push_back(step);
+    stepIndex = history.size(); // history step is iterated here rather than in FinalizeHistoryStep() because the history size may have just been changed
 }
 
 
@@ -3921,49 +3983,49 @@ std::vector<Vector2> GetModelCoordsSelection(const std::vector<VertexState>& vsL
 }
 
 
-void ModelStitch(std::vector<std::vector<Model>>& models, const ModelSelection &oldModelSelection, int modelVertexWidth, int modelVertexHeight)
+void ModelStitch(std::vector<std::vector<Model>>& models, const ModelSelection &modelSelection, int modelVertexWidth, int modelVertexHeight)
 {
     int canvasWidth = models.size();
     int canvasHeight = models[0].size();
     
-    if (oldModelSelection.topLeft.x > 0 && oldModelSelection.topLeft.y > 0) // stitch top left vertex if there is a diagonally adjacent model
+    if (modelSelection.topLeft.x > 0 && modelSelection.topLeft.y > 0) // stitch top left vertex if there is a diagonally adjacent model
     {
         int vertexIndex1 = 0; // vertex to be merged to 
         std::vector<int> vertexIndices = GetVertexIndices(modelVertexWidth - 1, modelVertexHeight - 1, modelVertexWidth); // vertices that need to be adjusted
         
         for (int i = 0; i < vertexIndices.size(); i++)
-            models[oldModelSelection.topLeft.x - 1][oldModelSelection.topLeft.y - 1].meshes[0].vertices[vertexIndices[i] + 1] = models[oldModelSelection.topLeft.x][oldModelSelection.topLeft.y].meshes[0].vertices[vertexIndex1 + 1];
+            models[modelSelection.topLeft.x - 1][modelSelection.topLeft.y - 1].meshes[0].vertices[vertexIndices[i] + 1] = models[modelSelection.topLeft.x][modelSelection.topLeft.y].meshes[0].vertices[vertexIndex1 + 1];
     }
     
-    if (oldModelSelection.bottomRight.x < canvasWidth - 1 && oldModelSelection.topLeft.y > 0) // stitch top right vertex if there is a diagonally adjacent model
+    if (modelSelection.bottomRight.x < canvasWidth - 1 && modelSelection.topLeft.y > 0) // stitch top right vertex if there is a diagonally adjacent model
     {
         int vertexIndex1 = GetVertexIndices(modelVertexWidth - 1, 0, modelVertexWidth)[0]; // vertex to be merged to
         std::vector<int> vertexIndices = GetVertexIndices(0, modelVertexHeight - 1, modelVertexWidth); // vertices that need to be adjusted
         
         for (int i = 0; i < vertexIndices.size(); i++)
-            models[oldModelSelection.bottomRight.x + 1][oldModelSelection.topLeft.y - 1].meshes[0].vertices[vertexIndices[i] + 1] = models[oldModelSelection.bottomRight.x][oldModelSelection.topLeft.y].meshes[0].vertices[vertexIndex1 + 1];            
+            models[modelSelection.bottomRight.x + 1][modelSelection.topLeft.y - 1].meshes[0].vertices[vertexIndices[i] + 1] = models[modelSelection.bottomRight.x][modelSelection.topLeft.y].meshes[0].vertices[vertexIndex1 + 1];            
     }
     
-    if (oldModelSelection.bottomRight.y < canvasHeight - 1 && oldModelSelection.bottomRight.x < canvasWidth - 1) // stitch bottom right vertex if there is a diagonally adjacent model
+    if (modelSelection.bottomRight.y < canvasHeight - 1 && modelSelection.bottomRight.x < canvasWidth - 1) // stitch bottom right vertex if there is a diagonally adjacent model
     {
         int vertexIndex1 = GetVertexIndices(modelVertexWidth - 1, modelVertexHeight - 1, modelVertexWidth)[0]; // vertex to be merged to
         int vertexIndex2 = 0; // vertex that needs to be adjusted
         
-        models[oldModelSelection.bottomRight.x + 1][oldModelSelection.bottomRight.y + 1].meshes[0].vertices[vertexIndex2 + 1] = models[oldModelSelection.bottomRight.x][oldModelSelection.bottomRight.y].meshes[0].vertices[vertexIndex1 + 1];
+        models[modelSelection.bottomRight.x + 1][modelSelection.bottomRight.y + 1].meshes[0].vertices[vertexIndex2 + 1] = models[modelSelection.bottomRight.x][modelSelection.bottomRight.y].meshes[0].vertices[vertexIndex1 + 1];
     }
     
-    if (oldModelSelection.topLeft.x > 0 && oldModelSelection.bottomRight.y < canvasHeight - 1) // stitch bottom left vertex if there is a diagonally adjacent model
+    if (modelSelection.topLeft.x > 0 && modelSelection.bottomRight.y < canvasHeight - 1) // stitch bottom left vertex if there is a diagonally adjacent model
     {
         int vertexIndex1 = GetVertexIndices(0, modelVertexHeight - 1, modelVertexWidth)[0]; // vertex that needs to be merged to
         std::vector<int> vertexIndices = GetVertexIndices(modelVertexWidth, 0, modelVertexWidth); // vertices that need to be adjusted
         
         for (int i = 0; i < vertexIndices.size(); i++)
-            models[oldModelSelection.topLeft.x - 1][oldModelSelection.bottomRight.y + 1].meshes[0].vertices[vertexIndices[i] + 1] = models[oldModelSelection.topLeft.x][oldModelSelection.bottomRight.y].meshes[0].vertices[vertexIndex1 + 1];            
+            models[modelSelection.topLeft.x - 1][modelSelection.bottomRight.y + 1].meshes[0].vertices[vertexIndices[i] + 1] = models[modelSelection.topLeft.x][modelSelection.bottomRight.y].meshes[0].vertices[vertexIndex1 + 1];            
     } 
     
-    if (oldModelSelection.topLeft.y > 0)
+    if (modelSelection.topLeft.y > 0)
     {
-        for (int i = 0; i < oldModelSelection.width; i++) // stitch all overlapping vertices on the top edge
+        for (int i = 0; i < modelSelection.width; i++) // stitch all overlapping vertices on the top edge
         {
             for (int j = 0; j < modelVertexWidth; j++)
             {     
@@ -3971,14 +4033,14 @@ void ModelStitch(std::vector<std::vector<Model>>& models, const ModelSelection &
                 std::vector<int> vertexIndices = GetVertexIndices(j, modelVertexHeight - 1, modelVertexWidth); // vertices that need to be adjusted
                 
                 for (int ii = 0; ii < vertexIndices.size(); ii++)
-                    models[oldModelSelection.topLeft.x + i][oldModelSelection.topLeft.y - 1].meshes[0].vertices[vertexIndices[ii] + 1] = models[oldModelSelection.topLeft.x + i][oldModelSelection.topLeft.y].meshes[0].vertices[vertexIndex1 + 1];        
+                    models[modelSelection.topLeft.x + i][modelSelection.topLeft.y - 1].meshes[0].vertices[vertexIndices[ii] + 1] = models[modelSelection.topLeft.x + i][modelSelection.topLeft.y].meshes[0].vertices[vertexIndex1 + 1];        
             }
         }
     }
     
-    if (oldModelSelection.bottomRight.x < canvasWidth - 1) 
+    if (modelSelection.bottomRight.x < canvasWidth - 1) 
     {
-        for (int i = 0; i < oldModelSelection.height; i++) // stitch all overlapping vertices on the right edge
+        for (int i = 0; i < modelSelection.height; i++) // stitch all overlapping vertices on the right edge
         {
             for (int j = 0; j < modelVertexHeight; j++)
             {     
@@ -3986,14 +4048,14 @@ void ModelStitch(std::vector<std::vector<Model>>& models, const ModelSelection &
                 std::vector<int> vertexIndices = GetVertexIndices(0, j, modelVertexWidth); // vertices that need to be adjusted
                 
                 for (int ii = 0; ii < vertexIndices.size(); ii++)
-                    models[oldModelSelection.bottomRight.x + 1][oldModelSelection.topLeft.y + i].meshes[0].vertices[vertexIndices[ii] + 1] = models[oldModelSelection.bottomRight.x][oldModelSelection.topLeft.y + i].meshes[0].vertices[vertexIndex1 + 1];   
+                    models[modelSelection.bottomRight.x + 1][modelSelection.topLeft.y + i].meshes[0].vertices[vertexIndices[ii] + 1] = models[modelSelection.bottomRight.x][modelSelection.topLeft.y + i].meshes[0].vertices[vertexIndex1 + 1];   
             }
         }        
     }
     
-    if (oldModelSelection.bottomRight.y < canvasHeight - 1)
+    if (modelSelection.bottomRight.y < canvasHeight - 1)
     {
-        for (int i = 0; i < oldModelSelection.width; i++) // stitch all overlapping vertices on the bottom edge
+        for (int i = 0; i < modelSelection.width; i++) // stitch all overlapping vertices on the bottom edge
         {
             for (int j = 0; j < modelVertexWidth; j++)
             {     
@@ -4001,14 +4063,14 @@ void ModelStitch(std::vector<std::vector<Model>>& models, const ModelSelection &
                 std::vector<int> vertexIndices = GetVertexIndices(j, 0, modelVertexWidth); // vertices that need to be adjusted
                 
                 for (int ii = 0; ii < vertexIndices.size(); ii++)
-                    models[oldModelSelection.topLeft.x + i][oldModelSelection.bottomRight.y + 1].meshes[0].vertices[vertexIndices[ii] + 1] = models[oldModelSelection.topLeft.x + i][oldModelSelection.bottomRight.y].meshes[0].vertices[vertexIndex1 + 1]; 
+                    models[modelSelection.topLeft.x + i][modelSelection.bottomRight.y + 1].meshes[0].vertices[vertexIndices[ii] + 1] = models[modelSelection.topLeft.x + i][modelSelection.bottomRight.y].meshes[0].vertices[vertexIndex1 + 1]; 
             }
         }         
     }
     
-    if (oldModelSelection.topLeft.x > 0)
+    if (modelSelection.topLeft.x > 0)
     {
-        for (int i = 0; i < oldModelSelection.height; i++) // stitch all overlapping vertices on the left edge
+        for (int i = 0; i < modelSelection.height; i++) // stitch all overlapping vertices on the left edge
         {
             for (int j = 0; j < modelVertexHeight; j++)
             {     
@@ -4016,7 +4078,7 @@ void ModelStitch(std::vector<std::vector<Model>>& models, const ModelSelection &
                 std::vector<int> vertexIndices = GetVertexIndices(modelVertexWidth - 1, j, modelVertexWidth); // vertices that need to be adjusted
                 
                 for (int ii = 0; ii < vertexIndices.size(); ii++)
-                    models[oldModelSelection.topLeft.x - 1][oldModelSelection.topLeft.y + i].meshes[0].vertices[vertexIndices[ii] + 1] = models[oldModelSelection.topLeft.x][oldModelSelection.topLeft.y + i].meshes[0].vertices[vertexIndex1 + 1];
+                    models[modelSelection.topLeft.x - 1][modelSelection.topLeft.y + i].meshes[0].vertices[vertexIndices[ii] + 1] = models[modelSelection.topLeft.x][modelSelection.topLeft.y + i].meshes[0].vertices[vertexIndex1 + 1];
             }
         }          
     }
@@ -4164,7 +4226,7 @@ void UpdateCharacterCamera(Camera* camera, const std::vector<std::vector<Model>>
 }
 
 
-void UpdatePerspectiveCamera(Camera* camera)
+void UpdateFreeCamera(Camera* camera)
 {
     static Vector2 previousMousePosition = { 0.0f, 0.0f };
     
@@ -4343,7 +4405,7 @@ void ProcessInput(int key, std::string& s, float& input, InputFocus& inputFocus,
 }
 
 
-std::vector<VertexState> FindVertexSelection(const std::vector<std::vector<Model>>& models, const ModelSelection& modelSelection, const RayHitInfo hitPosition, float selectRadius)
+std::vector<VertexState> FindVertexSelection(const std::vector<std::vector<Model>>& models, const ModelSelection& modelSelection, RayHitInfo hitPosition, float selectRadius)
 {
     std::vector<VertexState>vertexIndices; // vector to return
     
@@ -4351,24 +4413,24 @@ std::vector<VertexState> FindVertexSelection(const std::vector<std::vector<Model
     {
         Vector2 hitCoords = {hitPosition.position.x, hitPosition.position.z};
     
-        for (int i = 0; i < modelSelection.expandedSelection.size(); i++) // check all models recorded by modelSelection for vertices to be selected
+        for (int i = 0; i < modelSelection.selection.size(); i++) // check models for vertices to be selected
         {
-            for(int j = 0; j < (models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertexCount * 3) - 2; j += 3) // check this models vertices
+            for (int j = 0; j < (models[modelSelection.selection[i].x][modelSelection.selection[i].y].meshes[0].vertexCount * 3) - 2; j += 3) // check this models vertices
             {
-                Vector2 vertexCoords = {models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j], models[modelSelection.expandedSelection[i].x][modelSelection.expandedSelection[i].y].meshes[0].vertices[j+2]};
+                Vector2 vertexCoords = {models[modelSelection.selection[i].x][modelSelection.selection[i].y].meshes[0].vertices[j], models[modelSelection.selection[i].x][modelSelection.selection[i].y].meshes[0].vertices[j+2]};
                 
                 float result = xzDistance(hitCoords, vertexCoords);
                 
                 if (result <= selectRadius) // if this vertex is inside the radius
                 {
                     VertexState vs;
-                    vs.coords.x = modelSelection.expandedSelection[i].x;
-                    vs.coords.y = modelSelection.expandedSelection[i].y;
+                    vs.coords.x = modelSelection.selection[i].x;
+                    vs.coords.y = modelSelection.selection[i].y;
                     vs.index = j; 
                     
                     vertexIndices.push_back(vs); // store the vertex's index in the mesh and its models coords
                 }
-            }                   
+            }          
         }
     }
     
@@ -4786,6 +4848,401 @@ Mesh GenMeshHeightmap32bit(Image heightmap, Vector3 size)
 }
 
 
+void UpdateTopDownCamera(Camera* camera)
+{
+    bool direction[6] = { IsKeyDown(cameraMoveControl[MOVE_FRONT]),
+                           IsKeyDown(cameraMoveControl[MOVE_BACK]),
+                           IsKeyDown(cameraMoveControl[MOVE_RIGHT]),
+                           IsKeyDown(cameraMoveControl[MOVE_LEFT]),
+                           IsKeyDown(cameraMoveControl[MOVE_UP]),
+                           IsKeyDown(cameraMoveControl[MOVE_DOWN]) };
+    
+    // free fly camera
+    camera->position.x += direction[MOVE_RIGHT] - direction[MOVE_LEFT];
+    camera->position.y += direction[MOVE_UP] - direction[MOVE_DOWN];
+    camera->position.z += direction[MOVE_BACK] - direction[MOVE_FRONT];
+    
+    camera->target.x = camera->position.x - sinf(cameraAngle.x)*cosf(cameraAngle.y)*CAMERA_FIRST_PERSON_FOCUS_DISTANCE;
+    camera->target.y = camera->position.y + sinf(cameraAngle.y)*CAMERA_FIRST_PERSON_FOCUS_DISTANCE;
+    camera->target.z = camera->position.z - cosf(cameraAngle.x)*cosf(cameraAngle.y)*CAMERA_FIRST_PERSON_FOCUS_DISTANCE;
+}
+
+
+RayHitInfo FindHit2D(const Ray& ray, const std::vector<std::vector<Model>>& models, int modelVertexWidth, int modelVertexHeight)
+{
+    RayHitInfo hitPosition = GetCollisionRayGround(ray, 0);
+    
+    int index1 = GetVertexIndices(modelVertexWidth - 1, 0, modelVertexWidth)[0]; // index of the top right vertex
+    int index2 = GetVertexIndices(0, modelVertexHeight - 1, modelVertexWidth)[0]; // index of the bottom left vertex
+    
+    float leftX = models[0][0].meshes[0].vertices[0];
+    float rightX = models[models.size() - 1][0].meshes[0].vertices[index1];
+    float topY = models[0][0].meshes[0].vertices[2];
+    float bottomY = models[0][models[0].size() - 1].meshes[0].vertices[index2 + 2];
+    
+    if (hitPosition.position.x < leftX || hitPosition.position.x > rightX || hitPosition.position.z < topY || hitPosition.position.z > bottomY) // if the hit position is outside of the model boundary, mark as false
+    {
+        hitPosition.hit = false;
+    }
+    
+    return hitPosition;
+}
+
+// modelCoords: coordinates of the model to check. length: how many models to check in this direction before changing directions. direction: 1 right, 2 up, 3 left 4 down. loop: iteration along the current direction. total: total number of models checked 
+RayHitInfo FindHit3D(const Ray& ray, const std::vector<std::vector<Model>>& models, Vector2& modelCoords, int length, int direction, int loop, int total)
+{
+    // search for ray model collision starting from modelCoords and spiral out
+    if (modelCoords.x < models.size() && modelCoords.x >= 0 && modelCoords.y < models[0].size() && modelCoords.y >= 0) // skip if attempting to check a model that doesnt exist
+    {
+        RayHitInfo hitPosition;
+        
+        hitPosition = GetCollisionRayModel2(ray, &models[modelCoords.x][modelCoords.y]); 
+        
+        if (hitPosition.hit)
+        {
+            return hitPosition;
+        }
+        else
+        {
+            total++;
+            loop++;
+            
+            if (total == models.size() * models[0].size()) // if all models have been checked, return with .hit false
+            {
+                hitPosition.hit = false;
+                return hitPosition;
+            }
+            
+            switch (direction) // call the next FindHit3D, with different arguments depending on the direction and whether or not it's reached the end of the length of one line of search
+            {
+                case 1:
+                {
+                    if (loop >= length)
+                    {
+                        modelCoords.x += 1;
+                        return FindHit3D(ray, models, modelCoords, length + 2, direction + 1, 0, total); // when loop count reaches length, change direction. when direction is one, also increase length
+                    }
+                    else
+                    {
+                        modelCoords.x += 1;
+                        return FindHit3D(ray, models, modelCoords, length, direction, loop, total); // move right
+                    }
+                }
+                case 2:
+                {
+                    if (loop >= length)
+                    {
+                        modelCoords.x -= 1;
+                        return FindHit3D(ray, models, modelCoords, length, direction + 1, 0, total);
+                    }
+                    else
+                    {
+                        modelCoords.y -= 1;
+                        return FindHit3D(ray, models, modelCoords, length, direction, loop, total); // move up
+                    }
+                }
+                case 3:
+                {
+                    if (loop >= length)
+                    {
+                        modelCoords.y += 1;
+                        return FindHit3D(ray, models, modelCoords, length, direction + 1, 0, total);
+                    }
+                    else
+                    {
+                        modelCoords.x -= 1;
+                        return FindHit3D(ray, models, modelCoords, length, direction, loop, total); // move left
+                    }
+                }
+                case 4:
+                {
+                    if (loop >= length)
+                    {
+                        modelCoords.x += 1;
+                        return FindHit3D(ray, models, modelCoords, length, 1, 0, total);
+                    }
+                    else
+                    {
+                        modelCoords.y += 1;
+                        return FindHit3D(ray, models, modelCoords, length, direction, loop, total); // move down
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+        //TraceLog(LOG_ERROR, "###################");
+        loop++;
+       
+        switch (direction) // call the next FindHit3D, with different arguments depending on the direction and whether or not it's reached the end of the length of one line of search
+        {
+            case 1:
+            {
+                if (loop >= length)
+                {
+                    modelCoords.x += 1;
+                    return FindHit3D(ray, models, modelCoords, length + 2, direction + 1, 0, total); // when loop count reaches length, change direction. when direction is one, also increase length
+                }
+                else
+                {
+                    modelCoords.x += 1;
+                    return FindHit3D(ray, models, modelCoords, length, direction, loop, total); // move right
+                }
+            }
+            case 2:
+            {
+                if (loop >= length)
+                {
+                    modelCoords.x -= 1;
+                    return FindHit3D(ray, models, modelCoords, length, direction + 1, 0, total);
+                }
+                else
+                {
+                    modelCoords.y -= 1;
+                    return FindHit3D(ray, models, modelCoords, length, direction, loop, total); // move up
+                }
+            }
+            case 3:
+            {
+                if (loop >= length)
+                {
+                    modelCoords.y += 1;
+                    return FindHit3D(ray, models, modelCoords, length, direction + 1, 0, total);
+                }
+                else
+                {
+                    modelCoords.x -= 1;
+                    return FindHit3D(ray, models, modelCoords, length, direction, loop, total); // move left
+                }
+            }
+            case 4:
+            {
+                if (loop >= length)
+                {
+                    modelCoords.x += 1;
+                    return FindHit3D(ray, models, modelCoords, length, 1, 0, total);
+                }
+                else
+                {
+                    modelCoords.y += 1;
+                    return FindHit3D(ray, models, modelCoords, length, direction, loop, total); // move down
+                }
+            }
+        }
+    }
+}
+
+
+ModelSelection FindModelSelection(int canvasWidth, int canvasHeight, int modelWidth, Vector2 modelCoords, float selectRadius)
+{
+    ModelSelection modelSelection;
+    
+    float realModelWidth = modelWidth - (1 / 120.f) * modelWidth; // modelWidth minus the width of one polygon. ASSUMES MODELVERTEXWIDTH = 120
+    int modelCheckRadius = ceil((selectRadius * 1.05) / realModelWidth); // how many models out from the model at modelCoords to check for vertices based on selectRadius plus a 5% margin. ASSUMES MODEL WIDTH = HEIGHT
+    
+    modelSelection.topLeft.y = modelCoords.y - modelCheckRadius; // top most model coordinate to be checked
+    if (modelSelection.topLeft.y < 0) modelSelection.topLeft.y = 0;
+    
+    modelSelection.bottomRight.x = modelCoords.x + modelCheckRadius; // right most model coordinate to be checked
+    if (modelSelection.bottomRight.x >= canvasWidth) modelSelection.bottomRight.x = canvasWidth - 1;
+    
+    modelSelection.bottomRight.y = modelCoords.y + modelCheckRadius; // bottom most model coordinate to be checked
+    if (modelSelection.bottomRight.y >= canvasHeight) modelSelection.bottomRight.y = canvasHeight - 1;
+    
+    modelSelection.topLeft.x = modelCoords.x - modelCheckRadius; // left most model coordinate to be checked
+    if (modelSelection.topLeft.x < 0) modelSelection.topLeft.x = 0;
+    
+    modelSelection.width = modelSelection.bottomRight.x - modelSelection.topLeft.x + 1;
+    modelSelection.height = modelSelection.bottomRight.y - modelSelection.topLeft.y + 1;
+    
+    for (int i = 0; i < modelSelection.width; i++)
+    {
+        for (int j = 0; j < modelSelection.height; j++)
+        {
+            modelSelection.selection.push_back(Vector2{i + modelSelection.topLeft.x, j + modelSelection.topLeft.y});
+        }
+    }
+    
+    return modelSelection;
+}
+
+
+void ExtendHistoryStep(HistoryStep& historyStep, const std::vector<std::vector<Model>>& models, const ModelSelection& modelCoords)
+{
+    for (int i = 0; i < modelCoords.selection.size(); i++) // go through each of the models 
+    {
+        int insert; // index to insert new model coordinates if they arent already in the historyStep
+        
+        if (BinarySearchVec2(modelCoords.selection[i], historyStep.modelCoords, insert) == -1) // if this model hasnt been recorded yet, add it
+        {
+            historyStep.modelCoords.insert(historyStep.modelCoords.begin() + insert, modelCoords.selection[i]);
+        
+            for (int j = 0; j < (models[modelCoords.selection[i].x][modelCoords.selection[i].y].meshes[0].vertexCount * 3) - 2; j += 3) // save each vertex's data
+            {
+               VertexState temp;
+               temp.index = j;
+               temp.coords = modelCoords.selection[i];
+               temp.y = models[modelCoords.selection[i].x][modelCoords.selection[i].y].meshes[0].vertices[j+1];
+               
+               historyStep.startingVertices.push_back(temp);
+            }
+        }
+    }
+}
+
+
+void FinalizeHistoryStep(HistoryStep& historyStep, const std::vector<std::vector<Model>>& models)
+{
+    for (int i = 0; i < historyStep.modelCoords.size(); i++) // go through each of the models 
+    {
+        for (int j = 0; j < (models[historyStep.modelCoords[i].x][historyStep.modelCoords[i].y].meshes[0].vertexCount * 3) - 2; j += 3) // save each vertex's data
+        {
+           VertexState temp;
+           temp.index = j;
+           temp.coords = historyStep.modelCoords[i];
+           temp.y = models[historyStep.modelCoords[i].x][historyStep.modelCoords[i].y].meshes[0].vertices[j+1];
+           
+           historyStep.endingVertices.push_back(temp);
+        }
+    }
+}
+
+
+int BinarySearchVec2(Vector2 vec2, const std::vector<Vector2>&v, int &i)
+{
+	if (!v.size())
+    {
+        i = 0;
+		return -1;
+    }
+
+	int min = 0;
+	int max = v.size() - 1;
+
+	while (1)
+	{
+		int index = ((max - min) / 2) + min;
+
+		if (min == max && (v[index].x != vec2.x || v[index].y != vec2.y))
+		{
+			if (vec2.y > v[index].y || (vec2.y == v[index].y && vec2.x > v[index].x))
+			{
+				i = index + 1;
+			}
+			else
+				i = index;
+
+			return -1;
+		}
+
+		if (v[index].x == vec2.x && v[index].y == vec2.y)
+			return index;
+		else if (v[index].y > vec2.y || (v[index].y == vec2.y && v[index].x > vec2.x))
+		{
+			max = index - 1;
+			if (max < min)
+				max = min;
+		}
+		else if (v[index].y < vec2.y || (v[index].y == vec2.y && v[index].x < vec2.x))
+		{
+			min = index + 1;
+			if (min > max)
+				min = max;
+		}
+
+		if (max < 0)
+			max = 0;
+	}
+}
+
+
+template<class T, class T2>
+int BinarySearch(T var, const std::vector<T2>&v, int &i)
+{
+	if (!v.size())
+    {
+        i = 0;
+		return -1;
+    }
+
+	int min = 0;
+	int max = v.size() - 1;
+
+	while (1)
+	{
+		int index = ((max - min) / 2) + min;
+
+		if (min == max && v[index] != var)
+		{
+			if (var > v[index])
+			{
+				i = index + 1;
+			}
+			else
+				i = index;
+
+			return -1;
+		}
+
+		if (v[index] == var)
+			return index;
+		else if (v[index] > var)
+		{
+			max = index - 1;
+			if (max < min)
+				max = min;
+		}
+		else if (v[index] < var)
+		{
+			min = index + 1;
+			if (min > max)
+				min = max;
+		}
+
+		if (max < 0)
+			max = 0;
+	}
+}
+
+
+template<class T, class T2>
+int BinarySearch(T var, const std::vector<T2>&v)
+{
+	if (!v.size())
+		return -1;
+
+	int min = 0;
+	int max = v.size() - 1;
+
+	while (1)
+	{
+		int index = ((max - min) / 2) + min;
+
+		if (min == max && v[index] != var)
+			return -1;
+
+		if (v[index] == var)
+			return index;
+		else if (v[index] > var)
+		{
+			max = index - 1;
+			if (max < min)
+				max = min;
+		}
+		else if (v[index] < var)
+		{
+			min = index + 1;
+			if (min > max)
+				min = max;
+		}
+
+		if (max < 0)
+			max = 0;
+	}
+}
+
+
 bool operator== (const VertexState &vs1, const VertexState &vs2)
 {
     if (vs1.coords.x == vs2.coords.x && vs1.coords.y == vs2.coords.y && vs1.index == vs2.index)
@@ -4801,7 +5258,19 @@ bool operator!= (const VertexState &vs1, const VertexState &vs2)
 }
 
 
+bool operator== (const ModelSelection& ms1, const ModelSelection& ms2)
+{
+    if (ms1.topLeft.x == ms2.topLeft.x && ms1.topLeft.y == ms2.topLeft.y && ms1.bottomRight.x == ms2.bottomRight.x && ms1.bottomRight.y == ms2.bottomRight.y)
+        return true;
+    else
+        return false;
+}
 
+
+bool operator!= (const ModelSelection& ms1, const ModelSelection& ms2)
+{
+    return !(ms1 == ms2);
+}
 
 
 
