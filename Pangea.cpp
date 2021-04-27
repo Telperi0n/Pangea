@@ -60,6 +60,13 @@ enum class CameraSetting
     TOP_DOWN
 };
 
+enum class HeightMapMode
+{
+    GRAYSCALE,
+    SLOPE,
+    RAINBOW
+};
+
 // Camera move modes (first person and third person cameras)
 typedef enum 
 { 
@@ -110,15 +117,15 @@ void NewHistoryStep(std::vector<HistoryStep>& history, const std::vector<std::ve
 
 Color* GenHeightmapSelection(const std::vector<std::vector<Model>>& models, const std::vector<Vector2>& modelCoords, int modelVertexWidth, int modelVertexHeight); // memory should be freed. needs a scale param. generates a heightmap from a selection of models
 
-Color* GenHeightmap(const Model& model, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY, bool grayscale); // memory should be freed. generates a heightmap for a single model. used for the model texture, cuts last row and column so pixels and polys are 1:1. will update global highest and lowest Y
+Color* GenHeightmap(const Model& model, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY, HeightMapMode mode, float slopeTolerance = 59.0); // memory should be freed. generates a heightmap for a single model. used for the model texture, cuts last row and column so pixels and polys are 1:1. will update global highest and lowest Y
 
 Color* GenHeightmap(const std::vector<std::vector<Model>>& models, int modelVertexWidth, int modelVertexHeight, float maxHeight, float minHeight, bool grayscale); // memory should be freed. generates a heightmap from the whole map. used for export
 
 RayHitInfo GetCollisionRayModel2(Ray ray, const Model *model); // having a copy of GetCollisionRayModel increases performance for some reason
 
-void UpdateHeightmap(const Model& model, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY);
+void UpdateHeightmap(const Model& model, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY, HeightMapMode mode);
 
-void UpdateHeightmap(const std::vector<std::vector<Model>>& models, int modelVertexWidth, int modelVertexHeight, float highestY, float lowestY);
+void UpdateHeightmap(const std::vector<std::vector<Model>>& models, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY, HeightMapMode mode);
 
 std::vector<int> GetVertexIndices(int x, int y, int width); // get the Indices (x value) of all vertices at a particular location in the square mesh. x y start at 0 and read left right, top down
 
@@ -169,6 +176,8 @@ ModelSelection FindModelSelection(int canvasWidth, int canvasHeight, int modelWi
 void ExtendHistoryStep(HistoryStep& historyStep, const std::vector<std::vector<Model>>& models, const ModelSelection& modelCoords); // add vertex info to the history step when it's edit range increases mid edit
 
 void FinalizeHistoryStep(HistoryStep& historyStep, const std::vector<std::vector<Model>>& models); // record the ending state of all vertices in this history step's range when the edit is complete
+
+void UpdateNormals(Model& model, int modelVertexWidth, int modelVertexHeight); // update a model's normals
 
 int BinarySearchVec2(Vector2 vec2, const std::vector<Vector2>&v, int &i); // binary search for vector2. returns the index where vec2 was found, -1 if not found. i will be changed to the index where vec2 should be inserted
 
@@ -323,6 +332,9 @@ int main()
     Rectangle updateTextureButton = {10, 457, 80, 40};
     Rectangle loadButton = {10, 507, 80, 40};
     Rectangle directoryButton = {10, 607, 80, 40};
+    Rectangle grayscaleTexBox = {82, 390, 14, 14};
+    Rectangle slopeTexBox = {82, 409, 14, 14};
+    Rectangle rainbowTexBox = {82, 428, 14, 14};
     
     // CAMERA PANEL
     Rectangle characterButton = {63, 55, 33, 33};
@@ -371,6 +383,7 @@ int main()
     Panel panel = Panel::NONE;
     InputFocus inputFocus = InputFocus::NONE;
     CameraSetting cameraSetting = CameraSetting::FREE;
+    HeightMapMode heightMapMode = HeightMapMode::GRAYSCALE;
     
     InitWindow(windowWidth, windowHeight, "Pangea");
     
@@ -599,7 +612,7 @@ int main()
                             UnloadImage(tempImage);
                             RL_FREE(vertexPixels);
                             
-                            Color* pixels = GenHeightmap(model, modelVertexWidth, modelVertexHeight, highestY, lowestY, 1);
+                            Color* pixels = GenHeightmap(model, modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode);
                             Image image = LoadImageEx(pixels, modelVertexWidth - 1, modelVertexHeight - 1);
                             Texture2D tex = LoadTextureFromImage(image); // create a texture from the heightmap. height and width -1 so that pixels and polys are 1:1
                             RL_FREE(pixels);
@@ -842,7 +855,7 @@ int main()
                                                 Model model = LoadModelFromMesh(GenMeshHeightmap(tempImage, (Vector3){ modelWidth, 0, modelHeight }));  
                                                 UnloadImage(tempImage);
                                                 
-                                                Color* pixels = GenHeightmap(model, modelVertexWidth, modelVertexHeight, highestY, lowestY, 1);
+                                                Color* pixels = GenHeightmap(model, modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode);
                                                 Image image = LoadImageEx(pixels, modelVertexWidth - 1, modelVertexHeight - 1);
                                                 Texture2D tex = LoadTextureFromImage(image); // create a texture from the heightmap. height and width -1 so that pixels and polys are 1:1
                                                 RL_FREE(pixels);
@@ -910,7 +923,7 @@ int main()
                                 highestY = maxY;
                                 lowestY = minY;
                                 
-                                UpdateHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                                UpdateHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode); 
                             }
                             else if (CheckCollisionPointRec(mousePosition, loadButton))
                             {
@@ -925,6 +938,21 @@ int main()
                                 inputFocus = InputFocus::NONE;
                                 
                                 showDirWindow = true;
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, grayscaleTexBox))
+                            {
+                                heightMapMode = HeightMapMode::GRAYSCALE;
+                                UpdateHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode);
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, slopeTexBox))
+                            {
+                                heightMapMode = HeightMapMode::SLOPE;
+                                UpdateHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode);
+                            }
+                            else if (CheckCollisionPointRec(mousePosition, rainbowTexBox))
+                            {
+                                heightMapMode = HeightMapMode::RAINBOW;
+                                UpdateHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode);
                             }
                         
                             break;
@@ -1100,7 +1128,7 @@ int main()
                                         rlUpdateBuffer(models[i][j].meshes[0].vboId[0], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
                                         rlUpdateBuffer(models[i][j].meshes[0].vboId[2], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
                                             
-                                        UpdateHeightmap(models[i][j], modelVertexWidth, modelVertexHeight, highestY, lowestY);  
+                                        UpdateHeightmap(models[i][j], modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode);  
                                     }                                    
                                 }
                             }
@@ -1529,7 +1557,7 @@ int main()
                                         rlUpdateBuffer(models[i][j].meshes[0].vboId[0], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
                                         rlUpdateBuffer(models[i][j].meshes[0].vboId[2], models[i][j].meshes[0].vertices, models[i][j].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
                                             
-                                        UpdateHeightmap(models[i][j], modelVertexWidth, modelVertexHeight, highestY, lowestY);  
+                                        UpdateHeightmap(models[i][j], modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode);  
                                     }                                    
                                 }
                             }
@@ -1724,7 +1752,7 @@ int main()
                     
                     if (hitPosition.hit && stampStretch && brush == BrushTool::STAMP)
                     {
-                        vertexIndices = FindVertexSelection(models, editSelection, hitPosition, stampStretchLength); // this info will be used to find the height of the cylinders drawn around hit position
+                        vertexIndices = FindVertexSelection(models, editSelection, hitPosition, stampStretchLength/2+selectRadius+innerRadius); // this info will be used to find the height of the cylinders drawn around hit position
                         
                         FindStampPoints(stampRotationAngle, stampStretchLength, stamp1, stamp2, Vector2{hitPosition.position.x, hitPosition.position.z});
                     }
@@ -1816,7 +1844,7 @@ int main()
                     {
                         for (int i = 0; i < editSelection.selection.size(); i++)
                         {
-                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode); 
                         }
                         
                         timeCounter = 0;
@@ -1873,7 +1901,7 @@ int main()
                     {
                         for (int i = 0; i < editSelection.selection.size(); i++)
                         {
-                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode); 
                         }
                         
                         timeCounter = 0;
@@ -1995,7 +2023,7 @@ int main()
                     {
                         for (int i = 0; i < editSelection.selection.size(); i++)
                         {
-                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY);
+                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode);
                         }
                         
                         timeCounter = 0;
@@ -2270,7 +2298,7 @@ int main()
                     {
                         for (int i = 0; i < editSelection.selection.size(); i++)
                         {
-                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                            UpdateHeightmap(models[editSelection.selection[i].x][editSelection.selection[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode); 
                         }
                         
                         timeCounter = 0;
@@ -2424,7 +2452,8 @@ int main()
                         
                         for (int i = 0; i < history[stepIndex - 1].modelCoords.size(); i++)
                         {
-                            UpdateHeightmap(models[history[stepIndex - 1].modelCoords[i].x][history[stepIndex - 1].modelCoords[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY);
+                            UpdateNormals(models[history[stepIndex - 1].modelCoords[i].x][history[stepIndex - 1].modelCoords[i].y], modelVertexWidth, modelVertexHeight);
+                            UpdateHeightmap(models[history[stepIndex - 1].modelCoords[i].x][history[stepIndex - 1].modelCoords[i].y], modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode);
                         }
                         
                         updateFlag = false;                
@@ -2447,10 +2476,12 @@ int main()
                     int x = history[stepIndex - 1].modelCoords[i].x;
                     int y = history[stepIndex - 1].modelCoords[i].y;
                     
+                    UpdateNormals(models[x][y], modelVertexWidth, modelVertexHeight);
+                    
                     rlUpdateBuffer(models[x][y].meshes[0].vboId[0], models[x][y].meshes[0].vertices, models[x][y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
                     rlUpdateBuffer(models[x][y].meshes[0].vboId[2], models[x][y].meshes[0].vertices, models[x][y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
            
-                    UpdateHeightmap(models[x][y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                    UpdateHeightmap(models[x][y], modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode); 
                 }         
 
                 stepIndex--;
@@ -2471,10 +2502,12 @@ int main()
                     int x = history[stepIndex].modelCoords[i].x;
                     int y = history[stepIndex].modelCoords[i].y;
                     
+                    UpdateNormals(models[x][y], modelVertexWidth, modelVertexHeight);
+                    
                     rlUpdateBuffer(models[x][y].meshes[0].vboId[0], models[x][y].meshes[0].vertices, models[x][y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex position 
                     rlUpdateBuffer(models[x][y].meshes[0].vboId[2], models[x][y].meshes[0].vertices, models[x][y].meshes[0].vertexCount*3*sizeof(float));    // Update vertex normals 
            
-                    UpdateHeightmap(models[x][y], modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                    UpdateHeightmap(models[x][y], modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode); 
                 }   
 
                 stepIndex++;               
@@ -2508,7 +2541,15 @@ int main()
                 highestY = maxY;
                 lowestY = minY;
                 
-                UpdateHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY); 
+                for (int i = 0; i < models.size(); i++) // update normals
+                {
+                    for (int j = 0; j < models[i].size(); j++)
+                    {
+                        UpdateNormals(models[i][j], modelVertexWidth, modelVertexHeight);
+                    }
+                }
+                
+                UpdateHeightmap(models, modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode); 
             }
             
             switch (inputFocus)
@@ -2832,50 +2873,6 @@ int main()
                     
                     if (models.empty()) DrawGrid(100, 1.0f);
                     
-                    if (hitPosition.hit) // draw brush influence cylinder
-                    {
-                        if (brush == BrushTool::SELECT)
-                        {
-                            int increment = (vertexIndices.size() / 500) + 1; // cull some vertex draw calls with larger selections
-                            
-                             // draw every highlighted vertex
-                            for (int i = 0; i < vertexIndices.size(); i += increment)
-                            {
-                                Vector3 v = {models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index], models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1], models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 2]};
-                                DrawCube(v, 0.03f, 0.03f, 0.03f, YELLOW);
-                            }
-                        }
-                        else
-                        {
-                            float cylinderHeight = 0;
-                            
-                            for (int i = 0; i < vertexIndices.size(); i++)
-                            {
-                                if (models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1] > cylinderHeight)
-                                    cylinderHeight = models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1];
-                            }
-                            
-                            if (stampStretch && brush == BrushTool::STAMP)
-                            {
-                                DrawCylinderWires(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, selectRadius + (stampStretchLength/2), selectRadius + (stampStretchLength/2), cylinderHeight + 0.1, 19, Color {255, 255, 255, 65});
-                                
-                                DrawCylinderWires(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, 0.1, 0.1, cylinderHeight + 0.1, 19, Color {255, 0, 0, 20});
-                                DrawCylinder(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, 0.1, 0.1, cylinderHeight + 0.1, 19, Color {255, 0, 0, 40});  
-                                
-                                DrawCylinderWires(Vector3 {stamp1.x, 0, stamp1.y}, 0.1, 0.1, cylinderHeight + 0.1, 19, Color {126, 0, 255, 20});
-                                DrawCylinder(Vector3 {stamp1.x, 0, stamp1.y}, 0.1, 0.1, cylinderHeight + 0.1, 19, Color {126, 0, 255, 40});  
-                           
-                                DrawCylinderWires(Vector3 {stamp2.x, 0, stamp2.y}, 0.1, 0.1, cylinderHeight + 0.1, 19, Color {126, 0, 255, 20});
-                                DrawCylinder(Vector3 {stamp2.x, 0, stamp2.y}, 0.1, 0.1, cylinderHeight + 0.1, 19, Color {126, 0, 255, 40});  
-                           }
-                            else
-                            {
-                                DrawCylinderWires(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, selectRadius, selectRadius, cylinderHeight + 0.1, 19, Color {255, 255, 255, 20});
-                                DrawCylinder(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, selectRadius, selectRadius, cylinderHeight + 0.1, 19, Color {255, 255, 255, 40});   
-                            }                            
-                        }
-                    }
-                    
                     if (!vertexSelection.empty()) // draw every selected vertex
                     {
                         Color vertexColor;
@@ -2895,6 +2892,62 @@ int main()
                         }
                     }
                     
+                    if (hitPosition.hit) // draw brush influence cylinder
+                    {
+                        if (brush == BrushTool::SELECT)
+                        {
+                            int increment = (vertexIndices.size() / 500) + 1; // cull some vertex draw calls with larger selections
+                            
+                             // draw every highlighted vertex
+                            for (int i = 0; i < vertexIndices.size(); i += increment)
+                            {
+                                Vector3 v = {models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index], models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1], models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 2]};
+                                DrawCube(v, 0.03f, 0.03f, 0.03f, YELLOW);
+                            }
+                        }
+                        else
+                        {
+                            float cylinderHeight = 0;
+                            
+                            for (int i = 0; i < vertexIndices.size(); i++) // find highest vertex and adjust cylinder height accordingly
+                            {
+                                if (models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1] > cylinderHeight)
+                                    cylinderHeight = models[vertexIndices[i].coords.x][vertexIndices[i].coords.y].meshes[0].vertices[vertexIndices[i].index + 1];
+                            }
+                            
+                            if (stampStretch && brush == BrushTool::STAMP)
+                            {
+                                DrawCylinderWires(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, 0.1, 0.1, cylinderHeight + 0.09, 19, Color {255, 0, 0, 20});
+                                DrawCylinder(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, 0.1, 0.1, cylinderHeight + 0.09, 19, Color {255, 0, 0, 40});  
+                                
+                                DrawCylinderWires(Vector3 {stamp1.x, 0, stamp1.y}, 0.1, 0.1, cylinderHeight + 0.09, 19, Color {126, 0, 255, 20});
+                                DrawCylinder(Vector3 {stamp1.x, 0, stamp1.y}, 0.1, 0.1, cylinderHeight + 0.09, 19, Color {126, 0, 255, 40});  
+                           
+                                DrawCylinderWires(Vector3 {stamp2.x, 0, stamp2.y}, 0.1, 0.1, cylinderHeight + 0.09, 19, Color {126, 0, 255, 20});
+                                DrawCylinder(Vector3 {stamp2.x, 0, stamp2.y}, 0.1, 0.1, cylinderHeight + 0.09, 19, Color {126, 0, 255, 40});  
+                                
+                                DrawCylinderWires(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, selectRadius + (stampStretchLength/2) + innerRadius, selectRadius + (stampStretchLength/2) + innerRadius, cylinderHeight + 0.1, 19, Color {255, 255, 255, 20});
+                                DrawCylinder(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, selectRadius + (stampStretchLength/2) + innerRadius, selectRadius + (stampStretchLength/2) + innerRadius, cylinderHeight + 0.1, 19, Color {255, 255, 255, 40});
+                            }
+                            else if (brush == BrushTool::STAMP)
+                            {
+                                DrawCylinderWires(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, 0.1, 0.1, cylinderHeight + 0.09, 19, Color {255, 0, 0, 20});
+                                DrawCylinder(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, 0.1, 0.1, cylinderHeight + 0.09, 19, Color {255, 0, 0, 40}); 
+                                
+                                DrawCylinderWires(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, selectRadius + innerRadius, selectRadius + innerRadius, cylinderHeight + 0.1, 19, Color {255, 255, 255, 20});
+                                DrawCylinder(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, selectRadius + innerRadius, selectRadius + innerRadius, cylinderHeight + 0.1, 19, Color {255, 255, 255, 40});   
+                            }                  
+                            else
+                            {
+                                DrawCylinderWires(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, 0.1, 0.1, cylinderHeight + 0.09, 19, Color {255, 0, 0, 20});
+                                DrawCylinder(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, 0.1, 0.1, cylinderHeight + 0.09, 19, Color {255, 0, 0, 40}); 
+                                
+                                DrawCylinderWires(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, selectRadius, selectRadius, cylinderHeight + 0.1, 19, Color {255, 255, 255, 20});
+                                DrawCylinder(Vector3 {hitPosition.position.x, 0, hitPosition.position.z}, selectRadius, selectRadius, cylinderHeight + 0.1, 19, Color {255, 255, 255, 40});  
+                            }
+                        }
+                    }
+                    
                     if (!modelSelection.selection.empty()) // draw model selection frame
                     {
                         float realModelWidth = modelWidth - (1 / 120.f) * modelWidth; // modelWidth minus the width of one polygon. ASSUMES MODELVERTEXWIDTH = 120
@@ -2911,7 +2964,8 @@ int main()
                     }
                     
                 EndMode3D();
-                
+                DrawText(FormatText("%03.02f", highestY), 1700, 30, 15, BLACK);
+                /* debug text
                 if (editSelection.selection.size())
                 {
                     for (int i = 0; i < editSelection.selection.size(); i++)
@@ -2920,7 +2974,7 @@ int main()
                         DrawText(FormatText("%02.01f", editSelection.selection[i].y), 1730, 30 + i * 30, 15, BLACK);
                     }
                 }
-                /* debug text
+                
                 DrawText(FormatText("%f", lastRayHitLoc.x), 165, 30, 15, BLACK);
                 DrawText(FormatText("%f", lastRayHitLoc.y), 165, 50, 15, BLACK);
                 
@@ -3003,9 +3057,34 @@ int main()
                         
                         DrawRectangleRec(xMeshBox, WHITE);
                         DrawRectangleRec(zMeshBox, WHITE);
-                        
                         DrawText("X:", 14, 33, 15, BLACK);
                         DrawText("Y:", 14, 58, 15, BLACK);
+                        
+                        DrawRectangleRec(grayscaleTexBox, WHITE);
+                        DrawRectangleRec(slopeTexBox, WHITE);
+                        DrawRectangleRec(rainbowTexBox, WHITE);
+                        DrawText("Grayscale:", 5, 391, 11, BLACK);
+                        DrawText("Slope:", 5, 410, 11, BLACK);
+                        DrawText("Rainbow:", 5, 429, 11, BLACK);
+                        
+                        switch (heightMapMode)
+                        {
+                            case HeightMapMode::GRAYSCALE:
+                            {
+                                DrawText("+", grayscaleTexBox.x + 2, grayscaleTexBox.y - 2, 20, BLACK);
+                                break;
+                            }
+                            case HeightMapMode::SLOPE:
+                            {
+                                DrawText("+", slopeTexBox.x + 2, slopeTexBox.y - 2, 20, BLACK);
+                                break;
+                            }
+                            case HeightMapMode::RAINBOW:
+                            {
+                                DrawText("+", rainbowTexBox.x + 2, rainbowTexBox.y - 2, 20, BLACK);
+                                break;
+                            }
+                        }
                         
                         if (inputFocus == InputFocus::X_MESH)
                             DrawRectangleLinesEx(xMeshBox, 1, BLACK);
@@ -3440,7 +3519,7 @@ int main()
 // brush that takes the average of the normals of the first selection and then flattens out perpedicularly to that
 // vertical line from hitPosition the height of highest y when on ground collision
 // box selection
-// dynamic history capacity
+// dynamic history capacity 
 // mesh interpolation
 // setting that checks mouse hit position distances between frames and interpolates between them by queueing actions  
 // precise export image size
@@ -3449,9 +3528,7 @@ int main()
 // slope finder: find the slope between two points
 // camera lock onto hitposition at certain angle and distance
 // brush height cap according to adjustable plane / mesh
-// smooth selection
 // make it so pressing x doesnt overlap with shift or ctrl x
-// have ray collision detect save last hit location and test starting from there first in subsequent frames
 // insert a size reference dummy model (human, tree, etc)
 
 // -crash after ~141 history steps (if 3x3+ mesh?)
@@ -3603,13 +3680,13 @@ Color* GenHeightmapSelection(const std::vector<std::vector<Model>>& models, cons
 }
 
 
-Color* GenHeightmap(const Model& model, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY, bool grayscale)
+Color* GenHeightmap(const Model& model, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY, HeightMapMode mode, float slopeTolerance)
 {
     // this version of GenHeightMap is used only for texturing the models in the editor, not exporting. it matches pixels 1:1 with polys rather than vertices
     
     Color* pixels = (Color*)RL_MALLOC((modelVertexWidth - 1)*(modelVertexHeight - 1)*sizeof(Color)); 
     
-    for(int i = 0; i < (model.meshes[0].vertexCount * 3) - 2; i += 3) // find if there is a new highestY and/or lowestY
+    for (int i = 0; i < (model.meshes[0].vertexCount * 3) - 2; i += 3) // find if there is a new highestY and/or lowestY
     {
         if (model.meshes[0].vertices[i+1] > highestY)
             highestY = model.meshes[0].vertices[i+1];
@@ -3620,54 +3697,91 @@ Color* GenHeightmap(const Model& model, int modelVertexWidth, int modelVertexHei
     
     float scale = highestY - lowestY;
     
-    if (grayscale)
+    switch (mode)
     {
-        for (int i = 0; i < (modelVertexWidth - 1) * (modelVertexHeight - 1); i++)
+        case HeightMapMode::GRAYSCALE:
         {
-            unsigned char pixelValue = (abs((highestY - model.meshes[0].vertices[i * 18 + 1]) - scale) / scale) * 255;
+            for (int i = 0; i < (modelVertexWidth - 1) * (modelVertexHeight - 1); i++)
+            {
+                unsigned char pixelValue = (abs((highestY - model.meshes[0].vertices[i * 18 + 1]) - scale) / scale) * 255;
+                
+                pixels[i].r = pixelValue;
+                pixels[i].g = pixelValue; 
+                pixels[i].b = pixelValue; 
+                pixels[i].a = 255;           
+            }
             
-            pixels[i].r = pixelValue;
-            pixels[i].g = pixelValue; 
-            pixels[i].b = pixelValue; 
-            pixels[i].a = 255;           
+            break;
         }
-    }
-    else
-    {
-        // if not grayscale, assign each pixel one of 1170 colors (cutting out some pink - red range), starting at purple and going up to red
-        for (int i = 0; i < (modelVertexWidth - 1) * (modelVertexHeight - 1); i++)
+        case HeightMapMode::SLOPE:
         {
-            float rgb = (fabs((highestY - model.meshes[0].vertices[i * 18 + 1]) - scale) / scale) * 1170;
+            // generates a texture that colors the pixels based on their vertex normals as well as height. below slopeTolerance being tinted one color, above being another
+            for (int i = 0; i < (modelVertexWidth - 1) * (modelVertexHeight - 1); i++)
+            {
+                float adj = sqrt(model.meshes[0].normals[i * 18] * model.meshes[0].normals[i * 18] + model.meshes[0].normals[i * 18 + 2] * model.meshes[0].normals[i * 18 + 2]); // distance from vertex to end of normal in x and z
+                float opp = model.meshes[0].normals[i * 18 + 1]; // distance from vertex to end of normal in y
+                float hyp = sqrt(adj * adj + opp * opp); // distance from vertex to end of normal
+                float vertexAngle = asinf(opp / hyp)*RAD2DEG; // the angle of the normal
+                
+                if (180 - (vertexAngle + 90) >= slopeTolerance)
+                {
+                    // if the incline is greater than angle, the color appears brown
+                    pixels[i].r = 110 + ((abs((highestY - model.meshes[0].vertices[i * 18 + 1]) - scale) / scale) * 145);
+                    pixels[i].g = 66 + (abs((highestY - model.meshes[0].vertices[i * 18 + 1]) - scale) / scale) * 147; 
+                    pixels[i].b = (abs((highestY - model.meshes[0].vertices[i * 18 + 1]) - scale) / scale) * 150; 
+                    pixels[i].a = 255;  
+                }
+                else
+                {
+                    // if the incline is less than angle, the color appears green
+                    pixels[i].r = (abs((highestY - model.meshes[0].vertices[i * 18 + 1]) - scale) / scale) * 150; 
+                    pixels[i].g = 110 + ((abs((highestY - model.meshes[0].vertices[i * 18 + 1]) - scale) / scale) * 145);
+                    pixels[i].b = (abs((highestY - model.meshes[0].vertices[i * 18 + 1]) - scale) / scale) * 150; 
+                    pixels[i].a = 255;    
+                }      
+            }
             
-            pixels[i].r = 0;
-            pixels[i].g = 0;
-            pixels[i].b = 0;
-            pixels[i].a = 255;
+            break;
+        }
+        case HeightMapMode::RAINBOW:
+        {
+            // if rainbow, assign each pixel one of 1170 colors (cutting out some pink - red range), starting at purple and going up to red
+            for (int i = 0; i < (modelVertexWidth - 1) * (modelVertexHeight - 1); i++)
+            {
+                float rgb = (fabs((highestY - model.meshes[0].vertices[i * 18 + 1]) - scale) / scale) * 1170;
+                
+                pixels[i].r = 0;
+                pixels[i].g = 0;
+                pixels[i].b = 0;
+                pixels[i].a = 255;
+                
+                //red 
+                if (rgb <= 150)
+                    pixels[i].r = 150 - rgb; 
+                
+                if (rgb > 660 && rgb <= 915)
+                    pixels[i].r = rgb - 660;
+                
+                if (rgb > 915)
+                    pixels[i].r = 255;
+                //green
+                if (rgb > 150 && rgb <= 405)
+                    pixels[i].g = rgb - 150;
+                
+                if (rgb > 405 && rgb <= 915)
+                    pixels[i].g = 255;
+                
+                if (rgb > 915)
+                    pixels[i].g = 255 - (rgb - 915);
+                //blue
+                if (rgb <= 405)
+                    pixels[i].b = 255;
+                
+                if (rgb > 405 && rgb <= 660)
+                    pixels[i].b = 255 - (rgb - 405);
+            }
             
-            //red 
-            if (rgb <= 150)
-                pixels[i].r = 150 - rgb; 
-            
-            if (rgb > 660 && rgb <= 915)
-                pixels[i].r = rgb - 660;
-            
-            if (rgb > 915)
-                pixels[i].r = 255;
-            //green
-            if (rgb > 150 && rgb <= 405)
-                pixels[i].g = rgb - 150;
-            
-            if (rgb > 405 && rgb <= 915)
-                pixels[i].g = 255;
-            
-            if (rgb > 915)
-                pixels[i].g = 255 - (rgb - 915);
-            //blue
-            if (rgb <= 405)
-                pixels[i].b = 255;
-            
-            if (rgb > 405 && rgb <= 660)
-                pixels[i].b = 255 - (rgb - 405);
+            break;
         }
     }
     
@@ -3820,9 +3934,9 @@ RayHitInfo GetCollisionRayModel2(Ray ray, const Model *model)
 }
 
 
-void UpdateHeightmap(const Model& model, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY)
+void UpdateHeightmap(const Model& model, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY, HeightMapMode heightMapMode)
 {
-    Color* pixels = GenHeightmap(model, modelVertexWidth, modelVertexHeight, highestY, lowestY, 1);
+    Color* pixels = GenHeightmap(model, modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode);
         
     UpdateTexture(model.materials[0].maps[MAP_DIFFUSE].texture, pixels);
     
@@ -3830,13 +3944,13 @@ void UpdateHeightmap(const Model& model, int modelVertexWidth, int modelVertexHe
 }
 
 
-void UpdateHeightmap(const std::vector<std::vector<Model>>& models, int modelVertexWidth, int modelVertexHeight, float highestY, float lowestY)
+void UpdateHeightmap(const std::vector<std::vector<Model>>& models, int modelVertexWidth, int modelVertexHeight, float& highestY, float& lowestY, HeightMapMode heightMapMode)
 {
     for (int i = 0; i < models.size(); i++)
     {
         for (int j = 0; j < models[i].size(); j++)
         {
-            Color* pixels = GenHeightmap(models[i][j], modelVertexWidth, modelVertexHeight, highestY, lowestY, 1);
+            Color* pixels = GenHeightmap(models[i][j], modelVertexWidth, modelVertexHeight, highestY, lowestY, heightMapMode);
                 
             UpdateTexture(models[i][j].materials[0].maps[MAP_DIFFUSE].texture, pixels);
             
@@ -5104,6 +5218,55 @@ void FinalizeHistoryStep(HistoryStep& historyStep, const std::vector<std::vector
            temp.y = models[historyStep.modelCoords[i].x][historyStep.modelCoords[i].y].meshes[0].vertices[j+1];
            
            historyStep.endingVertices.push_back(temp);
+        }
+    }
+}
+
+
+void UpdateNormals(Model& model, int modelVertexWidth, int modelVertexHeight)
+{
+    int nCounter = 0;       // Used to count normals float by float
+
+    Vector3 vA;
+    Vector3 vB;
+    Vector3 vC;
+    Vector3 vN;
+    
+    for (int z = 0; z < modelVertexHeight-1; z++)
+    {
+        for (int x = 0; x < modelVertexWidth-1; x++)
+        {
+            for (int i = 0; i < 18; i += 9)
+            {
+                vA.x = model.meshes[0].vertices[nCounter + i];
+                vA.y = model.meshes[0].vertices[nCounter + i + 1];
+                vA.z = model.meshes[0].vertices[nCounter + i + 2];
+
+                vB.x = model.meshes[0].vertices[nCounter + i + 3];
+                vB.y = model.meshes[0].vertices[nCounter + i + 4];
+                vB.z = model.meshes[0].vertices[nCounter + i + 5];
+
+                vC.x = model.meshes[0].vertices[nCounter + i + 6];
+                vC.y = model.meshes[0].vertices[nCounter + i + 7];
+                vC.z = model.meshes[0].vertices[nCounter + i + 8];
+
+                vN = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vB, vA), Vector3Subtract(vC, vA)));
+
+                model.meshes[0].normals[nCounter + i] = vN.x;
+                model.meshes[0].normals[nCounter + i + 1] = vN.y;
+                model.meshes[0].normals[nCounter + i + 2] = vN.z;
+
+                model.meshes[0].normals[nCounter + i + 3] = vN.x;
+                model.meshes[0].normals[nCounter + i + 4] = vN.y;
+                model.meshes[0].normals[nCounter + i + 5] = vN.z;
+
+                model.meshes[0].normals[nCounter + i + 6] = vN.x;
+                model.meshes[0].normals[nCounter + i + 7] = vN.y;
+                model.meshes[0].normals[nCounter + i + 8] = vN.z;
+            }
+
+            nCounter += 18;     // 6 vertex, 18 floats
+            
         }
     }
 }
